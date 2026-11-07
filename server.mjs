@@ -1,11 +1,15 @@
 import http from "node:http";
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+
+// Files the hub creates (database, its write-ahead log, snapshots) are readable by its own user only.
+process.umask(0o077);
 
 const DEFAULT_PORT = 4000;
 // Cloud hosts such as Railway assign the port through PORT.
@@ -52,12 +56,26 @@ const PROJECT_NAME_PATTERN = /[^a-z0-9._/-]/g;
 const MENTION_PATTERN = /@([a-z0-9_-]+)/gi;
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 // On a cloud host, point AGENT_HUB_DATA_DIR at a mounted disk so data survives redeploys.
-const STATE_FILE = path.join(process.env.AGENT_HUB_DATA_DIR ?? DIR, "state.json");
-const BACKUP_FILE = `${STATE_FILE}.backup`;
+const DATA_DIR = process.env.AGENT_HUB_DATA_DIR ?? DIR;
+const DB_FILE = path.join(DATA_DIR, "agentstalk.db");
+// The JSON files older versions kept; imported once into the database, then renamed.
+const LEGACY_STATE_FILE = path.join(DATA_DIR, "state.json");
+const LEGACY_BACKUP_FILE = `${LEGACY_STATE_FILE}.backup`;
+const IMPORTED_SUFFIX = ".imported";
+const SNAPSHOT_DIR = path.join(DATA_DIR, "snapshots");
+const SNAPSHOT_INTERVAL_MS = 6 * 60 * 60_000;
+const SNAPSHOTS_KEPT = 7;
+const DB_BUSY_TIMEOUT_MS = 5000;
 const DASHBOARD_FILE = path.join(DIR, "dashboard.html");
 
+/** The open SQLite database; set by loadStore. */
+let db;
+/** What each project and key looked like when last written, so a save only writes what changed. */
+const savedProjects = new Map();
+const savedKeys = new Map();
 /** Every project's chat, locks, tasks and activity, keyed by project name. */
 const store = loadStore();
+ensureSnapshot();
 /** When each agent recently posted in chat, per project, for the chat limits. */
 const recentAgentPosts = new Map();
 /** Open wake-up streams per project, then per agent name, used by the Claude Code channel. */
@@ -67,6 +85,7 @@ http.createServer(handleRequest).listen(PORT, () => {
   console.log(`agentsTalk running on port ${PORT}${GITHUB_OAUTH_CLIENT_ID ? "" : " (GITHUB_OAUTH_CLIENT_ID not set: GitHub sign-in is off)"}`);
 });
 setInterval(sendHeartbeats, HEARTBEAT_MS);
+setInterval(ensureSnapshot, SNAPSHOT_INTERVAL_MS).unref();
 
 /**
  * Routes every HTTP request: the dashboard page, sign-in, the JSON API used by
@@ -81,6 +100,7 @@ async function handleRequest(req, res) {
   const branch = cleanBranch(url.searchParams.get("branch"));
   try {
     if (url.pathname === "/") return sendFile(res, DASHBOARD_FILE);
+    if (req.method === "GET" && url.pathname === "/api/health") return sendJson(res, 200, { ok: db.prepare("SELECT 1 AS ok").get().ok === 1 });
     if (req.method === "GET" && url.pathname === "/api/config") return sendJson(res, 200, { githubClientId: GITHUB_OAUTH_CLIENT_ID });
     if (req.method === "POST" && url.pathname === "/api/auth/github") return sendJson(res, 200, await signIn(await readJson(req)));
     const caller = authenticate(req);
@@ -761,20 +781,61 @@ function sendFile(res, file) {
 }
 
 /**
- * Loads saved state so a server restart keeps every project's tasks, locks
- * and chat. Older files are upgraded: one from before projects existed
- * becomes the default project, and locks from before branches existed
- * move to the unnamed branch.
+ * Opens the SQLite database in the data folder and loads every project and
+ * key from it, so a restart keeps tasks, locks, chat and sign-ins. The
+ * database uses write-ahead logging, so a crash can't leave it half-written.
+ * The first start with an empty database imports the old state.json (or its
+ * backup) once, then renames it so it is never read again.
  */
 function loadStore() {
-  if (!fs.existsSync(STATE_FILE) && !fs.existsSync(BACKUP_FILE)) return { projects: Object.create(null), keys: Object.create(null) };
-  let saved;
-  try { saved = JSON.parse(fs.readFileSync(STATE_FILE, "utf8")); }
-  catch (error) {
-    if (!fs.existsSync(BACKUP_FILE)) throw error;
-    saved = JSON.parse(fs.readFileSync(BACKUP_FILE, "utf8"));
-    console.error("agentsTalk recovered state from backup; recent changes may be missing");
+  db = new DatabaseSync(DB_FILE);
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = NORMAL;
+    PRAGMA busy_timeout = ${DB_BUSY_TIMEOUT_MS};
+    CREATE TABLE IF NOT EXISTS projects (name TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS keys (hash TEXT PRIMARY KEY, login TEXT NOT NULL, project TEXT NOT NULL, created_at INTEGER NOT NULL);
+  `);
+  const stored = { projects: Object.create(null), keys: Object.create(null) };
+  for (const row of db.prepare("SELECT name, data FROM projects").all()) stored.projects[row.name] = JSON.parse(row.data);
+  for (const row of db.prepare("SELECT hash, login, project, created_at FROM keys").all()) {
+    stored.keys[row.hash] = { login: row.login, project: row.project, createdAt: row.created_at };
   }
+  const isEmpty = !Object.keys(stored.projects).length && !Object.keys(stored.keys).length;
+  const legacy = isEmpty ? readLegacyState() : undefined;
+  const loaded = normalizeStore(legacy ?? stored);
+  if (legacy) {
+    writeStore(loaded);
+    for (const file of [LEGACY_STATE_FILE, LEGACY_BACKUP_FILE]) if (fs.existsSync(file)) fs.renameSync(file, `${file}${IMPORTED_SUFFIX}`);
+    console.log("agentsTalk imported the old state.json into the database");
+  } else {
+    for (const [name, space] of Object.entries(loaded.projects)) savedProjects.set(name, JSON.stringify(space));
+    for (const [hash, record] of Object.entries(loaded.keys)) savedKeys.set(hash, JSON.stringify(record));
+  }
+  return loaded;
+}
+
+/**
+ * Reads the old JSON state file, falling back to its backup. Returns nothing
+ * when neither exists; fails loudly when one exists but can't be read, so
+ * data is never silently dropped.
+ */
+function readLegacyState() {
+  const present = [LEGACY_STATE_FILE, LEGACY_BACKUP_FILE].filter((file) => fs.existsSync(file));
+  for (const file of present) {
+    try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { /* try the next file */ }
+  }
+  if (present.length) throw new Error(`Cannot read ${present.join(" or ")}; fix or move it before starting`);
+  return undefined;
+}
+
+/**
+ * Turns saved data into the in-memory shape: older files are upgraded (one
+ * from before projects existed becomes the default project, and locks from
+ * before branches existed move to the unnamed branch), and lookup tables
+ * have no prototype so names like "__proto__" are plain keys.
+ */
+function normalizeStore(saved) {
   const keys = Object.assign(Object.create(null), saved.keys ?? {});
   const projects = Object.assign(Object.create(null), saved.projects ?? { [DEFAULT_PROJECT]: saved });
   for (const [name, space] of Object.entries(projects)) {
@@ -786,18 +847,56 @@ function loadStore() {
   return { projects, keys };
 }
 
-/** Writes every project's state to disk after each change. */
+/** Saves whatever changed since the last save; called after every change. */
 function saveStore() {
-  const temp = `${STATE_FILE}.${process.pid}.tmp`;
-  const backupTemp = `${BACKUP_FILE}.${process.pid}.tmp`;
+  writeStore(store);
+}
+
+/**
+ * Writes the projects and keys that changed since the last write, all in one
+ * transaction, so a crash leaves either the old or the new state, never a
+ * mix. Unchanged projects aren't rewritten, and revoked keys are deleted.
+ */
+function writeStore(data) {
+  const projects = Object.entries(data.projects).map(([name, space]) => [name, JSON.stringify(space)]).filter(([name, json]) => savedProjects.get(name) !== json);
+  const keys = Object.entries(data.keys).map(([hash, record]) => [hash, record, JSON.stringify(record)]).filter(([hash, , json]) => savedKeys.get(hash) !== json);
+  const revoked = [...savedKeys.keys()].filter((hash) => !(hash in data.keys));
+  if (!projects.length && !keys.length && !revoked.length) return;
+  db.exec("BEGIN IMMEDIATE");
   try {
-    const fd = fs.openSync(temp, "w", 0o600);
-    try { fs.writeFileSync(fd, JSON.stringify(store, null, 2)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    fs.renameSync(temp, STATE_FILE);
-    fs.copyFileSync(STATE_FILE, backupTemp);
-    fs.renameSync(backupTemp, BACKUP_FILE);
-  } finally {
-    fs.rmSync(temp, { force: true });
-    fs.rmSync(backupTemp, { force: true });
+    const saveProject = db.prepare("INSERT INTO projects (name, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at");
+    for (const [name, json] of projects) saveProject.run(name, json, Date.now());
+    const saveKey = db.prepare("INSERT INTO keys (hash, login, project, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(hash) DO UPDATE SET login = excluded.login, project = excluded.project, created_at = excluded.created_at");
+    for (const [hash, record] of keys) saveKey.run(hash, record.login, record.project, record.createdAt);
+    const deleteKey = db.prepare("DELETE FROM keys WHERE hash = ?");
+    for (const hash of revoked) deleteKey.run(hash);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  for (const [name, json] of projects) savedProjects.set(name, json);
+  for (const [hash, , json] of keys) savedKeys.set(hash, json);
+  for (const hash of revoked) savedKeys.delete(hash);
+}
+
+/**
+ * Keeps a few recent copies of the database in the snapshots folder, taken
+ * with VACUUM INTO (a consistent copy even while the hub is running). Takes
+ * one when the newest is older than the interval, and prunes the oldest.
+ */
+function ensureSnapshot() {
+  try {
+    fs.mkdirSync(SNAPSHOT_DIR, { recursive: true, mode: 0o700 });
+    const existing = fs.readdirSync(SNAPSHOT_DIR).filter((file) => file.endsWith(".db")).sort();
+    const newest = existing.at(-1);
+    if (!newest || Date.now() - fs.statSync(path.join(SNAPSHOT_DIR, newest)).mtimeMs >= SNAPSHOT_INTERVAL_MS) {
+      const file = path.join(SNAPSHOT_DIR, `agentstalk-${new Date().toISOString().replace(/[:.]/g, "-")}.db`);
+      db.exec(`VACUUM INTO '${file.replaceAll("'", "''")}'`);
+      existing.push(path.basename(file));
+    }
+    for (const old of existing.slice(0, -SNAPSHOTS_KEPT)) fs.rmSync(path.join(SNAPSHOT_DIR, old), { force: true });
+  } catch (error) {
+    console.error(`agentsTalk could not take a database snapshot: ${error.message}`);
   }
 }
