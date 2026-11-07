@@ -1,0 +1,17 @@
+{
+  "name": "agent-hub",
+  "version": "1.0.0",
+  "description": "Shared file locks, tasks, messages and live dashboard for a team of AI agents",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  }
+}

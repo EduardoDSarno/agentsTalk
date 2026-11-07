@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Hub</title>
+<style>
+  :root { --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #6b7280; --line: #e5e7eb; --lock: #b45309; --ok: #047857; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111418; --card: #1a1f26; --text: #e6e8eb; --muted: #9aa3ae; --line: #2a313b; --lock: #f59e0b; --ok: #34d399; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
+  header { padding: 16px; display: flex; justify-content: space-between; align-items: baseline; }
+  h1 { margin: 0; font-size: 20px; }
+  h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  main { display: grid; gap: 12px; padding: 0 16px 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 6px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+  li:first-child { border-top: 0; }
+  .who { font-weight: 600; }
+  .muted { color: var(--muted); }
+  .lock { color: var(--lock); }
+  .done { color: var(--ok); }
+  #error { color: #dc2626; }
+</style>
+</head>
+<body>
+<header><h1>Agent Hub</h1><span id="error" class="muted"></span></header>
+<main>
+  <section><h2>File locks</h2><ul id="locks"></ul></section>
+  <section><h2>Tasks</h2><ul id="tasks"></ul></section>
+  <section><h2>Live activity</h2><ul id="events"></ul></section>
+  <section><h2>Messages</h2><ul id="messages"></ul></section>
+</main>
+<script>
+  const REFRESH_MS = 2000;
+  const token = new URLSearchParams(location.search).get("token") ?? "";
+
+  refresh();
+  setInterval(refresh, REFRESH_MS);
+
+  /** Pulls the latest team state from the hub and redraws every panel. */
+  async function refresh() {
+    try {
+      const response = await fetch(`/api/state?token=${encodeURIComponent(token)}`);
+      if (!response.ok) throw new Error((await response.json()).error);
+      const { locks, tasks, events, messages } = await response.json();
+      render("locks", locks, (l) => `<span class="lock">🔒 ${esc(l.path)}</span> — <span class="who">${esc(l.owner)}</span> ${esc(l.reason)} <span class="muted">${l.minutesLeft} min left</span>`);
+      render("tasks", tasks, (t) => `<span class="${t.status === "done" ? "done" : ""}">#${t.id} [${esc(t.status)}]</span> ${esc(t.title)} <span class="who">${esc(t.owner)}</span> <span class="muted">${esc(t.note)}</span>`);
+      render("events", events, (e) => `<span class="muted">${time(e.at)}</span> <span class="who">${esc(e.agent)}</span> ${esc(e.text)}`);
+      render("messages", messages, (m) => `<span class="muted">${time(m.at)}</span> <span class="who">${esc(m.from)} → ${esc(m.to)}</span> ${esc(m.text)}`);
+      document.getElementById("error").textContent = "";
+    } catch (error) {
+      document.getElementById("error").textContent = `Can't reach hub: ${error.message}`;
+    }
+  }
+
+  /** Fills one panel's list, or shows a placeholder when it's empty. */
+  function render(id, items, line) {
+    document.getElementById(id).innerHTML = items.length
+      ? items.map((item) => `<li>${line(item)}</li>`).join("")
+      : `<li class="muted">Nothing yet</li>`;
+  }
+
+  /** Escapes text so agent-written content can't inject HTML. */
+  function esc(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  }
+
+  /** Shows a timestamp as local hours and minutes. */
+  function time(at) {
+    return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+</script>
+</body>
+</html>
