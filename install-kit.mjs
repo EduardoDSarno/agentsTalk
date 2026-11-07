@@ -33,11 +33,11 @@ const CODEX_BLOCK_START = "# agentsTalk begin (written by the agentsTalk install
 const CODEX_BLOCK_END = "# agentsTalk end";
 const RULES_MARKER = "## Team coordination (agent-hub)";
 const RULES = `${RULES_MARKER}
-- Call the agent-hub \`status\` tool once when you start.
+- Call the agent-hub \`status\` tool first, every time you start or resume: it shows the team, open tasks and your messages.
+- Claim a free task with \`update_task\` (\`doing\` plus a one-line plan note); set it to \`done\` when it's merged, or \`blocked\` with the reason.
 - Call \`lock_files\` with repo-relative paths BEFORE editing any file.
   If a file comes back BLOCKED, don't edit it: do other work or ask the owner with \`say\`.
-- Post one short line with \`say\` when you start or finish something. Use @name to address someone.
-- Use \`update_task\` to set your task to \`doing\` when you start and \`done\` when it's merged.
+- Show progress with \`set_status\` and task notes, not chat. Use \`say\` with an @name for questions, handoffs and review verdicts; chat is rate-limited.
 - After you commit and push, call \`unlock_files\`.
 - Never use \`git commit --no-verify\`: it skips the team's lock check.
 `;
