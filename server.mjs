@@ -31,6 +31,12 @@ const CHAT_READ_MAX = 100;
 const RECENT_EVENTS_IN_STATUS = 10;
 const HEARTBEAT_MS = 25_000;
 const TASK_STATUSES = ["todo", "doing", "done"];
+// Someone counts as present when the hub heard from them recently.
+const ACTIVE_WINDOW_MS = 10 * 60_000;
+const PRESENCE_STATUSES = ["working", "available", "away"];
+const MAX_DOING_CHARS = 120;
+// Routes the dashboard polls as the signed-in person; everything else comes from their agent.
+const DASHBOARD_ROUTES = new Set(["/api/state", "/api/projects", "/api/me"]);
 const EVERYONE = "all";
 const UNKNOWN_AGENT = "unknown";
 // Requests without a project (older kits) land here, so they keep working.
@@ -92,11 +98,20 @@ async function handleRequest(req, res) {
     // Each person acts as their agent; the dashboard asks to act as the person.
     const asHuman = url.searchParams.get("as") === "human";
     const agent = caller.admin ? cleanName(url.searchParams.get("agent")) : asHuman ? caller.login : `${caller.login}${AGENT_SUFFIX}`;
+    const space = spaceFor(project);
+    // The admin has no sign-in of their own, so only agents it acts as (name-agent) are recorded.
+    if (caller.admin && agent.endsWith(AGENT_SUFFIX)) ensureMember(space, agent);
+    // Recorded before any route answers, so even the dashboard's lightweight polls count as being present.
+    const actor = DASHBOARD_ROUTES.has(url.pathname) ? (caller.admin ? undefined : caller.login) : agent;
+    if (actor) touchPresence(space, actor);
     if (req.method === "GET" && url.pathname === "/api/me") return sendJson(res, 200, { login: caller.login, project, admin: caller.admin });
     if (req.method === "GET" && url.pathname === "/api/projects") return sendJson(res, 200, listProjects(caller));
-    const space = spaceFor(project);
     if (url.pathname === "/mcp") return await handleMcp(req, res, space, project, agent);
-    if (req.method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, snapshot(space));
+    if (req.method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, snapshot(space, project));
+    if (req.method === "POST" && url.pathname === "/api/presence") {
+      const body = await readJson(req);
+      return sendJson(res, 200, setPresence(space, agent, body.status, body.doing));
+    }
     if (req.method === "GET" && url.pathname === "/api/status") return sendText(res, statusText(space, project, agent));
     if (req.method === "GET" && url.pathname === "/api/inbox") return sendText(res, formatInbox(space, agent));
     if (req.method === "GET" && url.pathname === "/api/wake") return openWakeStream(req, res, project, agent, caller.expiresAt);
@@ -232,6 +247,11 @@ function buildMcpServer(space, project, agent) {
     description: "Move a task. Setting it to 'doing' makes you its owner.",
     inputSchema: { id: z.number().int(), status: z.enum(TASK_STATUSES), note: z.string().optional() },
   }, async ({ id, status, note }) => reply(`Task #${updateTask(space, agent, id, status, note).id} is now ${status}`));
+
+  server.registerTool("set_status", {
+    description: "Tell the team what you're doing without posting in chat: status working, available or away, plus a short 'doing' line. Shows in the dashboard's team panel. Use it for progress instead of chat.",
+    inputSchema: { status: z.enum(PRESENCE_STATUSES), doing: z.string().optional() },
+  }, async ({ status, doing }) => reply(`Status: ${setPresence(space, agent, status, doing).status}`));
 
   server.registerTool("say", {
     description: `Post one short line in the team group chat, e.g. "working on the login form". Use @name to address a teammate or their agent, @${EVERYONE} for everyone. Don't post just to acknowledge.`,
@@ -411,6 +431,50 @@ function joinProject(space, human, agent) {
   return { human, agent };
 }
 
+/** Remembers that this person or agent was just heard from; kept in memory, since it goes stale in minutes. */
+function touchPresence(space, name) {
+  (space.presence[name] ??= { status: "", doing: "", lastSeen: 0 }).lastSeen = Date.now();
+}
+
+/**
+ * Saves what a person or agent says they're doing, so teammates know when to
+ * check in. "away" and "available" are overrides; "working" is also worked
+ * out automatically from tasks and locks, so setting it is optional.
+ */
+function setPresence(space, name, status, doing = "") {
+  if (!PRESENCE_STATUSES.includes(status)) throw httpError(400, `status must be one of ${PRESENCE_STATUSES.join(", ")}`);
+  const entry = (space.presence[name] ??= { status: "", doing: "", lastSeen: 0 });
+  Object.assign(entry, { status, doing: String(doing).slice(0, MAX_DOING_CHARS), lastSeen: Date.now() });
+  saveStore();
+  return { name, status: entry.status, doing: entry.doing };
+}
+
+/**
+ * Describes one person or agent for the team panel. They count as "away"
+ * unless the hub heard from them recently; otherwise an explicit status wins,
+ * and without one they are "working" when they hold a task or locks.
+ */
+function describePresence(space, name, work) {
+  const entry = space.presence[name];
+  const lastSeen = entry?.lastSeen || null;
+  const active = lastSeen !== null && Date.now() - lastSeen < ACTIVE_WINDOW_MS;
+  const doing = (entry?.doing || work.doing).slice(0, MAX_DOING_CHARS);
+  return { status: !active ? "away" : entry.status || (doing || work.locks ? "working" : "available"), doing, lastSeen };
+}
+
+/** What an agent is visibly doing: its task in progress and how many files it has locked. */
+function workOf(space, agent) {
+  const task = space.tasks.find((candidate) => candidate.owner === agent && candidate.status === "doing");
+  const locks = Object.values(space.locks).reduce((count, byBranch) => count + Object.values(byBranch).filter((lock) => lock.owner === agent).length, 0);
+  return { doing: task ? `#${task.id} ${task.title}` : "", locks };
+}
+
+/** Adds an agent the admin acts as to the project's team, so it shows in the team panel like a signed-in one. */
+function ensureMember(space, agent) {
+  if (Object.values(space.members).some((member) => member.agent === agent)) return;
+  joinProject(space, agent.slice(0, -AGENT_SUFFIX.length), agent);
+}
+
 /** Adds a new task to the project's board in the first status column. */
 function addTask(space, agent, title) {
   const task = { id: space.nextTaskId++, title, status: TASK_STATUSES[0], owner: "", note: "" };
@@ -437,7 +501,7 @@ function updateTask(space, agent, id, status, note) {
  * tasks, messages that mention them and recent activity in their project.
  */
 function statusText(space, project, agent) {
-  const { locks, tasks, events } = snapshot(space);
+  const { locks, tasks, events } = snapshot(space, project);
   const lines = [
     `agentsTalk team hub — project "${project}", you are "${agent}".`,
     "Rules: lock files before editing; never edit a file locked by someone else; unlock after you push. Post one short line with `say` when you start something; @name addresses someone.",
@@ -457,7 +521,7 @@ function statusText(space, project, agent) {
 }
 
 /** Returns one project's whole state for the dashboard, without expired locks. */
-function snapshot(space) {
+function snapshot(space, project) {
   pruneExpiredLocks(space);
   const now = Date.now();
   return {
@@ -469,7 +533,18 @@ function snapshot(space) {
       minutesLeft: Math.ceil((lock.expiresAt - now) / 60_000),
     }))),
     tasks: space.tasks,
-    members: Object.entries(space.members).map(([name, member]) => ({ name, agent: member.agent })),
+    // The top-level fields describe the agent; `person` describes the human behind it.
+    members: Object.entries(space.members).map(([name, member]) => {
+      const work = workOf(space, member.agent);
+      return {
+        name,
+        agent: member.agent,
+        ...describePresence(space, member.agent, work),
+        wakeable: (wakeStreams.get(project)?.get(member.agent)?.size ?? 0) > 0,
+        locks: work.locks,
+        person: describePresence(space, name, { doing: "", locks: 0 }),
+      };
+    }),
     events: [...space.events].reverse(),
     messages: space.messages.map(publicMessage),
   };
@@ -497,7 +572,7 @@ function spaceFor(project) {
 
 /** A new project's starting state. */
 function emptySpace() {
-  return { locks: Object.create(null), tasks: [], events: [], messages: [], notices: Object.create(null), members: Object.create(null), nextTaskId: 1, nextMessageId: 1 };
+  return { locks: Object.create(null), tasks: [], events: [], messages: [], notices: Object.create(null), members: Object.create(null), presence: Object.create(null), nextTaskId: 1, nextMessageId: 1 };
 }
 
 /**
@@ -647,7 +722,7 @@ function loadStore() {
   const keys = Object.assign(Object.create(null), saved.keys ?? {});
   const projects = Object.assign(Object.create(null), saved.projects ?? { [DEFAULT_PROJECT]: saved });
   for (const [name, space] of Object.entries(projects)) {
-    projects[name] = { ...emptySpace(), ...space, locks: Object.assign(Object.create(null), space.locks ?? {}), notices: Object.assign(Object.create(null), space.notices ?? {}), members: Object.assign(Object.create(null), space.members ?? {}) };
+    projects[name] = { ...emptySpace(), ...space, locks: Object.assign(Object.create(null), space.locks ?? {}), notices: Object.assign(Object.create(null), space.notices ?? {}), members: Object.assign(Object.create(null), space.members ?? {}), presence: Object.assign(Object.create(null), space.presence ?? {}) };
     for (const [file, lock] of Object.entries(projects[name].locks)) {
       projects[name].locks[file] = Object.assign(Object.create(null), "owner" in lock ? { "": lock } : lock);
     }
