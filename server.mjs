@@ -41,6 +41,8 @@ const DIRECTED_LIMIT = 6;
 const DIRECTED_WINDOW_MS = 10 * 60_000;
 // While a task is in one of these, only its owner can change it.
 const OWNED_TASK_STATUSES = ["doing", "blocked"];
+// An owned task with no activity from its owner for this long counts as abandoned.
+const STALE_TASK_MS = 60 * 60_000;
 // Someone counts as present when the hub heard from them recently.
 const ACTIVE_WINDOW_MS = 10 * 60_000;
 const PRESENCE_STATUSES = ["working", "available", "away"];
@@ -538,7 +540,7 @@ function ensureMember(space, agent) {
 
 /** Adds a new task to the project's board in the first status column. */
 function addTask(space, agent, title) {
-  const task = { id: space.nextTaskId++, title, status: TASK_STATUSES[0], owner: "", note: "" };
+  const task = { id: space.nextTaskId++, title, status: TASK_STATUSES[0], owner: "", note: "", updatedAt: Date.now() };
   space.tasks.push(task);
   logEvent(space, agent, `added task #${task.id}: ${title}`);
   saveStore();
@@ -549,14 +551,18 @@ function addTask(space, agent, title) {
  * Moves a task to a new status. Starting work on it claims it, and while it is
  * in progress or blocked only its owner can change it, so two agents never
  * work the same task; setting it back to todo releases it. Fails with 409 when
- * someone else holds the task.
+ * someone else holds the task, unless it has gone stale (its owner hasn't
+ * been seen for a long time), in which case anyone may take it over.
  */
 function updateTask(space, agent, id, status, note) {
   const task = space.tasks.find((candidate) => candidate.id === id);
   if (!task) throw httpError(404, `Task #${id} does not exist`);
-  if (task.owner && task.owner !== agent && OWNED_TASK_STATUSES.includes(task.status)) {
+  const takeover = task.owner && task.owner !== agent && isStale(space, task);
+  if (task.owner && task.owner !== agent && OWNED_TASK_STATUSES.includes(task.status) && !takeover) {
     throw httpError(409, `Task #${id} is ${task.status} with ${task.owner}; ask them in the chat before changing it`);
   }
+  if (takeover) logEvent(space, agent, `took over stale task #${id} from ${task.owner}`);
+  task.updatedAt = Date.now();
   task.status = status;
   if (status === "doing") task.owner = agent;
   if (status === "todo") task.owner = "";
@@ -564,6 +570,17 @@ function updateTask(space, agent, id, status, note) {
   logEvent(space, agent, `moved task #${id} to ${status}${note ? ` (${note})` : ""}`);
   saveStore();
   return task;
+}
+
+/**
+ * A task is stale when its owner holds it (in progress or blocked) but neither
+ * the task nor the owner has shown any activity for a long time, so it is
+ * probably abandoned. Stale tasks can be taken over by anyone.
+ */
+function isStale(space, task) {
+  if (!task.owner || !OWNED_TASK_STATUSES.includes(task.status)) return false;
+  const lastActivity = Math.max(task.updatedAt ?? 0, space.presence[task.owner]?.lastSeen ?? 0);
+  return Date.now() - lastActivity > STALE_TASK_MS;
 }
 
 /**
@@ -585,7 +602,7 @@ function statusText(space, project, agent) {
     ...(locks.length ? locks.map((l) => `- ${l.path} — ${l.owner} on ${branchLabel(l.branch)}${l.reason ? ` (${l.reason})` : ""}, ${l.minutesLeft} min left`) : ["- none"]),
     "",
     "Open tasks:",
-    ...(open.length ? open.map((t) => `- #${t.id} [${t.status}] ${t.owner ? t.owner : "unclaimed"}: ${t.title}${t.note ? ` (${t.note})` : ""}`) : ["- none"]),
+    ...(open.length ? open.map((t) => `- #${t.id} [${t.status}] ${t.owner ? t.owner : "unclaimed"}${t.stale ? " (stale, you may take it over)" : ""}: ${t.title}${t.note ? ` (${t.note})` : ""}`) : ["- none"]),
     ...(tasks.length > open.length ? [`(${tasks.length - open.length} done)`] : []),
     "",
     formatInbox(space, agent) || "No new chat messages for you.",
@@ -608,7 +625,7 @@ function snapshot(space, project) {
       reason: lock.reason,
       minutesLeft: Math.ceil((lock.expiresAt - now) / 60_000),
     }))),
-    tasks: space.tasks,
+    tasks: space.tasks.map((task) => ({ ...task, stale: isStale(space, task) })),
     // The top-level fields describe the agent; `person` describes the human behind it.
     members: Object.entries(space.members).map(([name, member]) => {
       const work = workOf(space, member.agent);
