@@ -35,6 +35,27 @@ test('working agents come from in-progress tasks and active locks, and all shows
  assert.match(html,/cat-agent/);assert.match(html,/No work reported/);assert.ok(!html.includes('Old task'));
 });
 
+test('an agent that reports work with set_status counts as working even without tasks or locks',()=>{
+ const {ui,elements}=dashboard();
+ const members=[{name:'alice',agent:'alice-agent',status:'working',doing:'reviewing the SQLite PR'},{name:'bob',agent:'bob-agent',status:'available',doing:''}];
+ ui.setData(members,[],[],'working');ui.renderAgents();
+ assert.equal(elements.get('agent-count').textContent,'1 working');
+ const html=elements.get('agents').innerHTML;
+ assert.match(html,/alice-agent/);assert.match(html,/reviewing the SQLite PR/);assert.ok(!html.includes('bob-agent'));
+ // The same work is not shown twice when it comes from the agent's task.
+ ui.setData([{name:'alice',agent:'alice-agent',status:'working',doing:'#1 Build dashboard'}],[{id:1,status:'doing',title:'Build dashboard',owner:'alice-agent'}],[],'working');ui.renderAgents();
+ assert.equal((elements.get('agents').innerHTML.match(/Build dashboard/g)||[]).length,1);
+});
+
+test('stale tasks are labelled and offer Take over, fresh tasks held by someone else offer nothing',()=>{
+ const {ui,elements}=dashboard();
+ ui.renderTasks([{id:1,status:'doing',title:'Abandoned',owner:'bob-agent',stale:true},{id:2,status:'doing',title:'Busy',owner:'bob-agent',stale:false}]);
+ const html=elements.get('tasks').innerHTML;
+ const [abandoned,busy]=html.split('Busy');
+ assert.match(abandoned,/Stale/);assert.match(abandoned,/Take over/);
+ assert.ok(!busy.includes('Stale'));assert.ok(!busy.includes('Take over'));
+});
+
 test('avatars use consistent colors for a person and their agent',()=>{
  const {ui}=dashboard();
  const alice=ui.personAvatar('alice',false,24),agent=ui.personAvatar('alice-agent',true,24),bob=ui.personAvatar('bob-agent',true,24);

@@ -433,7 +433,8 @@
         <div class="group-label">${g.label}<span class="tn">${g.items.length}</span></div>
         ${g.items.map((t) => {
           const heldByOther = t.owner && t.owner !== currentName && ["doing", "blocked"].includes(t.status);
-          const actions = heldByOther ? [] : t.status === "todo" ? [["doing", "Claim"]]
+          // A stale task (its owner went quiet) can be taken over by anyone.
+          const actions = heldByOther && t.stale ? [["doing", "Take over"]] : heldByOther ? [] : t.status === "todo" ? [["doing", "Claim"]]
             : t.status === "done" ? [["todo", "Reopen"]]
             : [[t.status === "blocked" ? "doing" : "blocked", t.status === "blocked" ? "Resume" : "Block"], ["done", "Done"], ["todo", "Release"]];
           return `<div class="row task-row">
@@ -441,7 +442,7 @@
             <div style="min-width:0">
               <div class="task-title ${t.status === "done" ? "done-t" : ""}">${esc(t.title)}</div>
               ${t.note ? `<div class="small muted task-note">${esc(t.note)}</div>` : ""}
-              <div class="task-meta"><span class="mono tn">#${esc(t.id)}</span><span aria-hidden="true">·</span>${t.owner ? `<span class="task-owner">${personAvatar(t.owner, t.owner.endsWith(AGENT_SUFFIX), 18)}<span>${esc(t.owner)}</span></span>` : "Unassigned"}</div>
+              <div class="task-meta"><span class="mono tn">#${esc(t.id)}</span><span aria-hidden="true">·</span>${t.owner ? `<span class="task-owner">${personAvatar(t.owner, t.owner.endsWith(AGENT_SUFFIX), 18)}<span>${esc(t.owner)}</span></span>` : "Unassigned"}${t.stale ? `<span class="soon" title="Its owner has been quiet for a while; anyone can take it over">Stale</span>` : ""}</div>
               ${actions.length ? `<label class="task-note-field">Note<input class="task-input" id="task-note-${esc(t.id)}" data-task-note="${esc(t.id)}" aria-label="Note for task #${esc(t.id)}" value="${esc(taskNotes.get(t.id) ?? t.note ?? "")}"${enabled ? "" : " disabled"}></label>
               <div class="task-actions">${actions.map(([status, label]) => `<button type="button" class="task-button" data-task-id="${esc(t.id)}" data-status="${status}" aria-label="${label} task #${esc(t.id)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}</div>` : ""}
             </div>
@@ -514,15 +515,21 @@
     }
   }
 
-  /** Shows work reported through in-progress tasks or unexpired file locks, not presence. */
+  /** Shows work reported through in-progress tasks, unexpired file locks, or the agent's own status line (set_status). */
   function renderAgents() {
     const names = [...new Set([
       ...lastMembers.map((m) => m.agent),
       ...lastTasks.filter((t) => t.status === "doing").map((t) => t.owner),
       ...lastLocks.map((l) => l.owner),
     ].filter((name) => typeof name === "string" && name.endsWith(AGENT_SUFFIX)))].sort();
-    const agents = names.map((name) => ({ name, tasks: lastTasks.filter((t) => t.status === "doing" && t.owner === name), locks: lastLocks.filter((l) => l.owner === name) }));
-    const working = agents.filter((a) => a.tasks.length || a.locks.length);
+    const agents = names.map((name) => {
+      const member = lastMembers.find((m) => m.agent === name);
+      const tasks = lastTasks.filter((t) => t.status === "doing" && t.owner === name);
+      // The hub's status line, shown when it says something the tasks don't already say.
+      const said = member?.status === "working" && member.doing && !tasks.some((t) => member.doing.includes(t.title)) ? member.doing : "";
+      return { name, tasks, said, locks: lastLocks.filter((l) => l.owner === name), reporting: member?.status === "working" };
+    });
+    const working = agents.filter((a) => a.tasks.length || a.locks.length || a.reporting);
     $("agent-count").textContent = `${working.length} working`;
     const shown = agentView === "working" ? working : agents;
     $("agents").innerHTML = shown.length ? shown.map((a) => `
@@ -530,8 +537,9 @@
         ${personAvatar(a.name, true, 24)}
         <div><div class="agent-name">${esc(a.name)}</div>
           ${a.tasks.map((t) => `<div class="agent-work">${esc(t.title)}</div>`).join("")}
+          ${a.said ? `<div class="agent-work">${esc(a.said)}</div>` : ""}
           ${a.locks.length ? `<div class="agent-work">${a.locks.length} ${a.locks.length === 1 ? "file locked" : "files locked"}</div>` : ""}
-          ${!a.tasks.length && !a.locks.length ? `<div class="agent-work">No work reported</div>` : ""}
+          ${!a.tasks.length && !a.locks.length && !a.said ? `<div class="agent-work">${a.reporting ? "Working" : "No work reported"}</div>` : ""}
         </div>
       </div>`).join("") : `<div class="none">${agentView === "working" ? "No agents reporting work" : "No agents have joined yet"}</div>`;
   }
