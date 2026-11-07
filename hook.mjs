@@ -18,6 +18,8 @@ const IS_CODEX = process.env.AGENTSTALK_TOOL === "codex";
 const LOCK_REASON = `editing with ${IS_CODEX ? "Codex" : "Claude Code"}`;
 const SHELL_LOCK_REASON = "changed by a shell command";
 const RENAME_OR_COPY = /[RC]/;
+// A shell command that pushes; the hook then frees locks on files that are fully pushed.
+const PUSH_COMMAND = /\bgit\s+(?:-\S+\s+)*push\b/;
 // Lines of a Codex apply_patch that name the files it changes.
 const PATCH_FILE_LINE = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm;
 // Set up means the setup script saved a personal key for this clone.
@@ -55,7 +57,10 @@ async function main() {
       await guardEdit(input);
       return IS_CODEX ? addContext(event, await hub("GET", "/api/inbox")) : undefined;
     }
-    if (event === "PostToolUse" && input.tool_name === "Bash") await checkShellChanges(input);
+    if (event === "PostToolUse" && input.tool_name === "Bash") {
+      await checkShellChanges(input);
+      if (PUSH_COMMAND.test(String(input.tool_input?.command ?? ""))) await releasePushedLocks(input);
+    }
     if (event === "SessionStart") return addContext(event, await hub("GET", "/api/status"));
     if (event === "UserPromptSubmit" || (event === "PostToolUse" && !IS_CODEX)) return addContext(event, await hub("GET", "/api/inbox"));
   } catch (error) {
@@ -123,6 +128,24 @@ async function checkShellChanges(input) {
     "Undo the changes your command made to them (or delete them if you created them), then work on something else " +
     "or ask the owner with the agent-hub say tool.");
   process.exit(BLOCK_EXIT_CODE);
+}
+
+/**
+ * Runs after a `git push`: frees this agent's locks on every file that now
+ * matches the upstream branch and has no uncommitted changes, so locks don't
+ * stay held after the work is shared. Files still changed locally, or whose
+ * push didn't go through, keep their locks. Does nothing without an upstream
+ * branch, since pushed work can't be told apart then.
+ */
+async function releasePushedLocks(input) {
+  const root = repoRoot(input);
+  let unpushed;
+  try {
+    unpushed = execFileSync("git", ["diff", "--name-only", "-z", "@{upstream}"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\0").filter(Boolean);
+  } catch {
+    return; // no upstream configured
+  }
+  await hub("POST", "/api/release", { dirty: [...changedFiles(root), ...unpushed] });
 }
 
 /** Lists files Git sees as modified, added, deleted or untracked, relative to the repo root. */
