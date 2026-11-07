@@ -33,7 +33,6 @@ const MAX_MESSAGE_CHARS = 1000;
 const CHAT_READ_DEFAULT = 20;
 const CHAT_READ_MAX = 100;
 const RECENT_EVENTS_IN_STATUS = 10;
-const HEARTBEAT_MS = 25_000;
 const TASK_STATUSES = ["todo", "doing", "blocked", "done"];
 // Agents chat sparingly: a broadcast line (no @mention) at most this often, and only a few directed messages per window.
 const BROADCAST_INTERVAL_MS = 5 * 60_000;
@@ -80,18 +79,15 @@ const store = loadStore();
 ensureSnapshot();
 /** When each agent recently posted in chat, per project, for the chat limits. */
 const recentAgentPosts = new Map();
-/** Open wake-up streams per project, then per agent name, used by the Claude Code channel. */
-const wakeStreams = new Map();
 
 http.createServer(handleRequest).listen(PORT, () => {
   console.log(`agentsTalk running on port ${PORT}${GITHUB_OAUTH_CLIENT_ID ? "" : " (GITHUB_OAUTH_CLIENT_ID not set: GitHub sign-in is off)"}`);
 });
-setInterval(sendHeartbeats, HEARTBEAT_MS);
 setInterval(ensureSnapshot, SNAPSHOT_INTERVAL_MS).unref();
 
 /**
  * Routes every HTTP request: the dashboard page, sign-in, the JSON API used by
- * hooks, channels and the dashboard, and the MCP endpoint agents connect to.
+ * hooks and the dashboard, and the MCP endpoint agents connect to.
  * Callers prove who they are with a personal key in the Authorization header,
  * which fixes both their name and their project (repo), so nobody can act as
  * someone else or reach another team's repo. The admin token can still pick
@@ -115,13 +111,7 @@ async function handleRequest(req, res) {
       for (const [hash, record] of Object.entries(store.keys)) {
         if (record.project === cleanProject(targetProject) && record.login === cleanName(targetLogin)) { delete store.keys[hash]; revoked++; }
       }
-      if (revoked) {
-        saveStore();
-        const streams = wakeStreams.get(cleanProject(targetProject));
-        for (const name of [cleanName(targetLogin), `${cleanName(targetLogin)}${AGENT_SUFFIX}`]) {
-          for (const stream of streams?.get(name) ?? []) stream.end();
-        }
-      }
+      if (revoked) saveStore();
       return sendJson(res, 200, { revoked });
     }
     const project = caller.admin ? cleanProject(url.searchParams.get("project")) : caller.project;
@@ -137,7 +127,7 @@ async function handleRequest(req, res) {
     if (req.method === "GET" && url.pathname === "/api/me") return sendJson(res, 200, { login: caller.login, project, admin: caller.admin });
     if (req.method === "GET" && url.pathname === "/api/projects") return sendJson(res, 200, listProjects(caller));
     if (url.pathname === "/mcp") return await handleMcp(req, res, space, project, agent);
-    if (req.method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, snapshot(space, project));
+    if (req.method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, snapshot(space));
     if (req.method === "POST" && url.pathname === "/api/presence") {
       const body = await readJson(req);
       return sendJson(res, 200, setPresence(space, agent, body.status, body.doing));
@@ -155,7 +145,6 @@ async function handleRequest(req, res) {
     }
     if (req.method === "GET" && url.pathname === "/api/status") return sendText(res, statusText(space, project, agent));
     if (req.method === "GET" && url.pathname === "/api/inbox") return sendText(res, formatInbox(space, agent));
-    if (req.method === "GET" && url.pathname === "/api/wake") return openWakeStream(req, res, project, agent, caller.expiresAt);
     if (req.method === "POST" && url.pathname === "/api/chat") {
       const body = await readJson(req);
       return sendJson(res, 200, publicMessage(postChat(project, agent, body.text, asHuman)));
@@ -211,7 +200,7 @@ function authenticate(req) {
   if (ADMIN_TOKEN && safeEqual(presented, ADMIN_TOKEN)) return { admin: true, login: "admin" };
   const record = store.keys[hashKey(presented)];
   return record && Number.isFinite(record.createdAt) && Date.now() - record.createdAt < KEY_TTL_MS
-    ? { admin: false, login: record.login, project: record.project, expiresAt: record.createdAt + KEY_TTL_MS } : null;
+    ? { admin: false, login: record.login, project: record.project } : null;
 }
 
 /** Calls the GitHub API as the signed-in person and returns the JSON, or fails with GitHub's reason. */
@@ -308,9 +297,8 @@ function buildMcpServer(space, project, agent) {
 }
 
 /**
- * Adds a chat message to a project, records who it mentions, and wakes any
- * mentioned Claude Code sessions in that project. Only humans' messages wake
- * agents, so two agents can't keep waking each other and burn tokens in a loop.
+ * Adds a chat message to a project and records who it mentions. Mentioned
+ * agents see it the next time they run, on a human prompt or a tool call.
  */
 function postChat(project, from, text, fromHuman = false) {
   const space = spaceFor(project);
@@ -322,7 +310,6 @@ function postChat(project, from, text, fromHuman = false) {
   space.messages.push(message);
   space.messages = space.messages.slice(-MAX_MESSAGES);
   saveStore();
-  deliverWakeUps(project);
   return message;
 }
 
@@ -352,43 +339,14 @@ function enforceChatLimits(project, agent, directed) {
  * hasn't received yet, and marks them received. Agents only ever get these,
  * never the whole chat, which keeps their token use low.
  */
-function takeMentions(space, agent, humanOnly = false) {
+function takeMentions(space, agent) {
   const fresh = space.messages.filter((m) =>
     m.from !== agent
     && !m.readBy.includes(agent)
-    && (m.mentions.includes(agent) || m.mentions.includes(EVERYONE))
-    && (!humanOnly || m.fromHuman));
+    && (m.mentions.includes(agent) || m.mentions.includes(EVERYONE)));
   for (const message of fresh) message.readBy.push(agent);
   if (fresh.length) saveStore();
   return fresh;
-}
-
-/** Keeps a stream open for a Claude Code channel and sends any waiting mentions. */
-function openWakeStream(req, res, project, agent, expiresAt) {
-  res.agentsTalkExpiresAt = expiresAt;
-  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-  res.write(": connected\n\n");
-  if (!wakeStreams.has(project)) wakeStreams.set(project, new Map());
-  const agents = wakeStreams.get(project);
-  if (!agents.has(agent)) agents.set(agent, new Set());
-  agents.get(agent).add(res);
-  req.on("close", () => agents.get(agent)?.delete(res));
-  deliverWakeUps(project);
-}
-
-/** Pushes new human mentions to every connected channel in the project whose agent is mentioned. */
-function deliverWakeUps(project) {
-  const space = spaceFor(project);
-  for (const [agent, streams] of wakeStreams.get(project) ?? []) {
-    for (const stream of streams) {
-      if (stream.agentsTalkExpiresAt && Date.now() >= stream.agentsTalkExpiresAt) { streams.delete(stream); stream.end(); }
-    }
-    if (!streams.size) continue;
-    const mentions = takeMentions(space, agent, true);
-    if (!mentions.length) continue;
-    const data = `data: ${JSON.stringify(mentions.map(publicMessage))}\n\n`;
-    for (const res of streams) res.write(data);
-  }
 }
 
 /**
@@ -588,7 +546,7 @@ function isStale(space, task) {
  * tasks, messages that mention them and recent activity in their project.
  */
 function statusText(space, project, agent) {
-  const { locks, tasks, events, members } = snapshot(space, project);
+  const { locks, tasks, events, members } = snapshot(space);
   const now = Date.now();
   const open = tasks.filter((t) => t.status !== "done");
   const lines = [
@@ -596,7 +554,7 @@ function statusText(space, project, agent) {
     "Rules: check Team and Open tasks first. Claim a free task with update_task doing + a one-line plan note, lock files before editing, never edit a file locked by someone else, unlock after you push. Show progress with set_status or task notes; chat (`say`, @name) is for questions, handoffs and review verdicts, and is rate-limited.",
     "",
     "Team:",
-    ...(members.length ? members.map((m) => `- ${m.agent}: ${m.status}${m.doing ? ` — ${m.doing}` : ""}${m.lastSeen ? `, seen ${Math.round((now - m.lastSeen) / 60_000)} min ago` : ""}${m.wakeable ? ", wakeable" : ""}`) : ["- none"]),
+    ...(members.length ? members.map((m) => `- ${m.agent}: ${m.status}${m.doing ? ` — ${m.doing}` : ""}${m.lastSeen ? `, seen ${Math.round((now - m.lastSeen) / 60_000)} min ago` : ""}`) : ["- none"]),
     "",
     "File locks:",
     ...(locks.length ? locks.map((l) => `- ${l.path} — ${l.owner} on ${branchLabel(l.branch)}${l.reason ? ` (${l.reason})` : ""}, ${l.minutesLeft} min left`) : ["- none"]),
@@ -614,7 +572,7 @@ function statusText(space, project, agent) {
 }
 
 /** Returns one project's whole state for the dashboard, without expired locks. */
-function snapshot(space, project) {
+function snapshot(space) {
   pruneExpiredLocks(space);
   const now = Date.now();
   return {
@@ -633,7 +591,6 @@ function snapshot(space, project) {
         name,
         agent: member.agent,
         ...describePresence(space, member.agent, work),
-        wakeable: (wakeStreams.get(project)?.get(member.agent)?.size ?? 0) > 0,
         locks: work.locks,
         person: describePresence(space, name, { doing: "", locks: 0 }),
       };
@@ -732,16 +689,6 @@ function pruneExpiredLocks(space) {
 /** Names a branch for messages; locks from tools that don't report one share an unnamed branch. */
 function branchLabel(branch) {
   return branch ? `branch ${branch}` : "an unnamed branch";
-}
-
-/** Keeps idle wake-up streams from being closed by proxies or the OS. */
-function sendHeartbeats() {
-  for (const agents of wakeStreams.values()) {
-    for (const streams of agents.values()) for (const res of streams) {
-      if (res.agentsTalkExpiresAt && Date.now() >= res.agentsTalkExpiresAt) res.end();
-      else res.write(": ping\n\n");
-    }
-  }
 }
 
 /** Makes paths from different machines and agents comparable. */

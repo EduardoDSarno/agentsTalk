@@ -43,7 +43,6 @@ test('presence follows activity, honours set_status, and shows who can be woken'
   assert.equal(state.alice.status, 'away');
   assert.equal(state.alice.lastSeen, null);
   assert.equal(state.bob.person.status, 'available');
-  assert.equal(state.alice.wakeable, false);
 
   // The dashboard's lightweight polls (/api/me, /api/projects) also count as the person being present.
   await call('/api/me', keys.alice);
@@ -81,12 +80,7 @@ test('presence follows activity, honours set_status, and shows who can be woken'
   state = await team();
   assert.equal(state.bob.doing, 'wiring the team panel');
 
-  // A connected wake-up stream marks the agent as wakeable, and disconnecting clears it.
-  const controller = new AbortController();
-  const stream = await fetch(`${base}/api/wake`, { headers: { authorization: `Bearer ${keys.bob}` }, signal: controller.signal });
-  await stream.body.getReader().read();
-  assert.equal((await team()).bob.wakeable, true);
-  controller.abort();
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal((await team()).bob.wakeable, false);
+  // Wake-up no longer exists: no stream route, and no wakeable flag on members.
+  assert.equal('wakeable' in state.bob, false);
+  assert.equal((await fetch(`${base}/api/wake`, { headers: { authorization: `Bearer ${keys.bob}` } })).status, 404);
 });

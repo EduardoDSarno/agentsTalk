@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // agentsTalk hook for Claude Code and Codex. No dependencies: copy it into your project.
+import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -18,6 +19,10 @@ const IS_CODEX = process.env.AGENTSTALK_TOOL === "codex";
 const LOCK_REASON = `editing with ${IS_CODEX ? "Codex" : "Claude Code"}`;
 const SHELL_LOCK_REASON = "changed by a shell command";
 const RENAME_OR_COPY = /[RC]/;
+// A shell command that mentions pushing; the hook then checks whether files really got pushed.
+const PUSH_COMMAND = /\bgit\s+(?:-\S+\s+)*push\b/;
+// Where the hook remembers, inside .git, which files a push is about to send.
+const PUSH_STATE_FILE = "agentstalk-push.json";
 // Lines of a Codex apply_patch that name the files it changes.
 const PATCH_FILE_LINE = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm;
 // Set up means the setup script saved a personal key for this clone.
@@ -53,9 +58,13 @@ async function main() {
   try {
     if (event === "PreToolUse") {
       await guardEdit(input);
+      if (input.tool_name === "Bash" && PUSH_COMMAND.test(String(input.tool_input?.command ?? ""))) rememberUnpushedFiles(input);
       return IS_CODEX ? addContext(event, await hub("GET", "/api/inbox")) : undefined;
     }
-    if (event === "PostToolUse" && input.tool_name === "Bash") await checkShellChanges(input);
+    if (event === "PostToolUse" && input.tool_name === "Bash") {
+      await checkShellChanges(input);
+      if (PUSH_COMMAND.test(String(input.tool_input?.command ?? ""))) await releasePushedLocks(input);
+    }
     if (event === "SessionStart") return addContext(event, await hub("GET", "/api/status"));
     if (event === "UserPromptSubmit" || (event === "PostToolUse" && !IS_CODEX)) return addContext(event, await hub("GET", "/api/inbox"));
   } catch (error) {
@@ -123,6 +132,54 @@ async function checkShellChanges(input) {
     "Undo the changes your command made to them (or delete them if you created them), then work on something else " +
     "or ask the owner with the agent-hub say tool.");
   process.exit(BLOCK_EXIT_CODE);
+}
+
+/**
+ * Runs before a command that mentions `git push`: remembers which files are
+ * in commits no remote branch has yet, i.e. what the push would send.
+ */
+function rememberUnpushedFiles(input) {
+  const root = repoRoot(input);
+  const files = unpushedFiles(root);
+  if (files) fs.writeFileSync(pushStatePath(root), JSON.stringify({ files }));
+}
+
+/**
+ * Runs after that command: frees this agent's locks only on files that were
+ * waiting to be pushed and now are on a remote branch with no local
+ * changes. A failed push, a command that only mentions pushing (like an
+ * echo), and files that are locked but not edited yet all keep their locks.
+ */
+async function releasePushedLocks(input) {
+  const root = repoRoot(input);
+  const stateFile = pushStatePath(root);
+  if (!fs.existsSync(stateFile)) return;
+  const { files: before } = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  fs.rmSync(stateFile, { force: true });
+  const stillUnpushed = new Set(unpushedFiles(root) ?? before);
+  const dirty = new Set(changedFiles(root));
+  const pushed = before.filter((file) => !stillUnpushed.has(file) && !dirty.has(file));
+  if (pushed.length) await hub("POST", "/api/unlock", { paths: pushed });
+}
+
+/**
+ * Files touched by local commits that no remote branch has yet. Counting
+ * against every remote branch, not only the upstream, means the first push of
+ * a new branch (`git push -u`, which has no upstream before it) is tracked too.
+ * Returns nothing outside a Git repo.
+ */
+function unpushedFiles(root) {
+  try {
+    const output = execFileSync("git", ["log", "--name-only", "-z", "--format=", "HEAD", "--not", "--remotes"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return [...new Set(output.split("\0").filter(Boolean))];
+  } catch {
+    return undefined;
+  }
+}
+
+/** Where the push state lives: inside this clone's .git folder, so it is never committed. */
+function pushStatePath(root) {
+  return path.resolve(root, execFileSync("git", ["rev-parse", "--git-path", PUSH_STATE_FILE], { cwd: root, encoding: "utf8" }).trim());
 }
 
 /** Lists files Git sees as modified, added, deleted or untracked, relative to the repo root. */

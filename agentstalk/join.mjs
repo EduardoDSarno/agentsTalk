@@ -12,8 +12,6 @@ const KIT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const KIT_FOLDER = path.basename(KIT_DIR);
 const CONFIG = JSON.parse(fs.readFileSync(path.join(KIT_DIR, "config.json"), "utf8"));
 const HUB_URL = CONFIG.hubUrl.replace(/\/$/, "");
-const CHANNEL_FILE = path.join(KIT_DIR, "channel.mjs");
-const MCP_PROXY_FILE = path.join(KIT_DIR, "mcp-proxy.mjs");
 const PRE_COMMIT_MARKER = "agent-hub";
 const PRE_COMMIT_SCRIPT = `#!/bin/sh\n# ${PRE_COMMIT_MARKER}: refuse commits of files a teammate has locked\nexec node "$(git rev-parse --show-toplevel)/${KIT_FOLDER}/pre-commit.mjs"\n`;
 // Per-person files shared by every repo this person joins.
@@ -22,7 +20,6 @@ const GITHUB_LOGIN_FILE = path.join(HOME_DIR, "github.json");
 const BIN_DIR = path.join(HOME_DIR, "bin");
 const COMMAND_NAME = "agentstalk";
 const SHELL_RC_MARKER = "# agentsTalk command";
-const CHANNEL_FLAG = "--dangerously-load-development-channels server:agent-hub-chat";
 const GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_API = "https://api.github.com";
@@ -43,8 +40,8 @@ await main().catch((error) => {
  * person signs in with GitHub; the hub checks with GitHub that they can write
  * to this repo and hands back a personal key. Nothing secret is in the repo:
  * the key lives only in this clone's Git config and Claude Code's settings
- * on this computer. Then the commit check, Claude Code's tools and wake-up
- * channel, and the `agentstalk` command are set up.
+ * on this computer. Then the commit check, Claude Code's tools, and the
+ * `agentstalk` command are set up.
  */
 async function main() {
   const { values } = parseArgs({ options: { agent: { type: "string", default: "auto" }, "switch-user": { type: "boolean" }, "no-command": { type: "boolean" } } });
@@ -62,7 +59,6 @@ async function main() {
 
   installPreCommit(root);
   const claudeReady = ["auto", "claude"].includes(values.agent) && connectClaudeCode(root, key);
-  if (values.agent === "claude" && !claudeReady) console.log("! Claude Code was not found. Install it, then run npx agentstalk@latest --agent claude again.");
   const codexReady = ["auto", "codex"].includes(values.agent) && connectCodex(root, values.agent === "codex");
   const commandReady = !values["no-command"] && installCommand();
   printNextSteps(login, agent, key, { claudeReady, codexReady, commandReady });
@@ -135,17 +131,16 @@ function installPreCommit(root) {
 }
 
 /**
- * Adds the hub tools and the wake-up channel to Claude Code for this project,
- * passing the personal key in a header and in the channel's environment,
- * never in a URL. Old entries are removed first so running the setup again
+ * Adds the hub tools to Claude Code for this project, passing the personal
+ * key in a header, never in a URL. Old entries (including the wake-up
+ * channel of earlier versions) are removed first, so running the setup again
  * just refreshes them. Returns false when Claude Code isn't installed.
  */
 function connectClaudeCode(root, key) {
   if (!commandExists("claude")) return false;
   for (const name of ["agent-hub", "agent-hub-chat"]) claude(["mcp", "remove", name, "-s", "local"], root, true);
-  claude(["mcp", "add", "--transport", "stdio", "-s", "local", "agent-hub", "--", "node", MCP_PROXY_FILE], root);
-  claude(["mcp", "add", "agent-hub-chat", "-s", "local", "-e", `AGENT_HUB_URL=${HUB_URL}`, "-e", `AGENT_HUB_KEY=${key}`, "--", "node", CHANNEL_FILE], root);
-  console.log("✓ Claude Code configured: team tools, automatic file locks and wake-up channel");
+  claude(["mcp", "add", "--transport", "http", "-s", "local", "agent-hub", `${HUB_URL}/mcp`, "--header", `Authorization: Bearer ${key}`], root);
+  console.log("✓ Claude Code connected: team tools and automatic file locks");
   return true;
 }
 
@@ -164,7 +159,7 @@ function connectCodex(root, explicit) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.appendFileSync(file, `${current && !current.endsWith("\n") ? "\n" : ""}\n[mcp_servers.agent-hub]\ncommand = "node"\nargs = ["${KIT_FOLDER}/mcp-proxy.mjs"]\n`);
   console.log("✓ Codex connected. Start codex from the repo root and trust the project to enable its MCP tools.");
-  console.log("  Trust the project hooks with /hooks. Codex receives mentions on its next action; idle wake-up is Claude-only.");
+  console.log("  Trust the project hooks with /hooks. Agents read their mentions on every prompt and tool call.");
   return true;
 }
 
@@ -172,8 +167,8 @@ function connectCodex(root, explicit) {
  * Installs the `agentstalk` terminal command in ~/.agentstalk/bin and puts
  * that folder on the PATH in the person's shell startup files. Inside any
  * team repo the command sets the clone up if needed and starts Claude Code
- * with the wake-up channel on. Returns true when the command already works in
- * this terminal, false when a new terminal is needed.
+ * (or Codex). Returns true when the command already works in this terminal,
+ * false when a new terminal is needed.
  */
 function installCommand() {
   if (process.platform === "win32") return false;
@@ -199,7 +194,7 @@ cd "$root" || exit 1
 if [ "$1" = "setup" ]; then shift; exec node ${KIT_FOLDER} "$@"; fi
 git config --get agenthub.key >/dev/null || node ${KIT_FOLDER} || exit 1
 if [ "$1" = "codex" ]; then shift; exec codex "$@"; fi
-exec claude ${CHANNEL_FLAG} "$@"
+exec claude "$@"
 `;
 }
 
@@ -209,15 +204,13 @@ function printNextSteps(login, agent, key, { claudeReady, codexReady, commandRea
   // The key goes after "#", which browsers never send to servers or keep in server logs.
   console.log(`Your dashboard link (personal, don't share it):\n  ${HUB_URL}/#key=${key}\n`);
   if (claudeReady) {
-    console.log(commandReady ? `Start working: type ${COMMAND_NAME} in this repo.` : `Start Claude with: claude ${CHANNEL_FLAG}`);
-    console.log("It starts Claude Code so teammates can wake it with @mentions.");
-    console.log("If Claude was already running, restart its session so it loads the connection.");
-    console.log("(First time: pick \"I am using this for local development\".)\n");
+    console.log(commandReady ? `Start Claude Code: type ${COMMAND_NAME} in this repo.` : "Start Claude Code from this repo root: claude");
+    console.log("It reads teammates' @mentions on every prompt and tool call.\n");
   }
   if (codexReady) {
     console.log(commandReady ? `Start Codex: ${COMMAND_NAME} codex` : "Start Codex from this repo root: codex");
     console.log("First time: trust the folder, then run /hooks to trust agentsTalk’s hooks.");
-    console.log("Codex can't be woken by @mentions; it sees them on its next action.\n");
+    console.log("Codex reads teammates' @mentions on every prompt and tool call, too.\n");
   }
   console.log("Using Cursor or another tool? Add an MCP server with:");
   console.log(`  URL:    ${HUB_URL}/mcp`);

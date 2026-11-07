@@ -48,7 +48,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 /**
  * Puts everything teammates need inside the team repo, so their whole setup
  * is cloning it and running the join script: the hook, the pre-commit check,
- * the wake-up channel bundled into one dependency-free file, the join script
+ * the Codex connection bundled into one dependency-free file, the join script
  * with the hub address, the shared Claude Code hook settings, and the
  * coordination rules other agents read from AGENTS.md. Nothing secret is
  * written: who may join is decided by GitHub repo access.
@@ -72,11 +72,12 @@ export async function installKit(repo, hubUrl, { showNextSteps = true } = {}) {
   writeJson(path.join(kit, "package.json"), { name: "agentstalk-kit", private: true, type: "module", main: "join.mjs" });
 
   for (const file of ["hook.mjs", "pre-commit.mjs", "kit/join.mjs", "kit/github-repo.mjs"]) fs.copyFileSync(path.join(DIR, file), path.join(kit, path.basename(file)));
-  for (const file of ["channel.mjs", "mcp-proxy.mjs"]) {
-    const built = path.join(DIR, "dist", file);
-    if (fs.existsSync(built)) fs.copyFileSync(built, path.join(kit, file));
-    else await bundle(file, path.join(kit, file));
-  }
+  const bridge = "mcp-proxy.mjs";
+  const built = path.join(DIR, "dist", bridge);
+  if (fs.existsSync(built)) fs.copyFileSync(built, path.join(kit, bridge));
+  else await bundle(bridge, path.join(kit, bridge));
+  // Earlier kits shipped a wake-up channel; it no longer exists.
+  fs.rmSync(path.join(kit, "channel.mjs"), { force: true });
   writeJson(path.join(kit, "config.json"), { hubUrl, repo: githubRepo });
   addHookSettings(path.join(repo, ".claude", "settings.json"));
   addCodexConfig(path.join(repo, ".codex", "config.toml"));
@@ -99,9 +100,9 @@ function githubRepoOf(repo) {
   }
 }
 
-/** Bundles the channel and its MCP dependency into one file, so teammates never run npm install. */
+/** Bundles the Codex connection and its MCP dependency into one file, so teammates never run npm install. */
 export async function bundleKit(directory) {
-  for (const file of ["channel.mjs", "mcp-proxy.mjs"]) await bundle(file, path.join(directory, file));
+  await bundle("mcp-proxy.mjs", path.join(directory, "mcp-proxy.mjs"));
 }
 
 async function bundle(file, outfile) {
