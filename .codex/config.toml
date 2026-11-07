@@ -1,0 +1,28 @@
+# agentsTalk begin (written by the agentsTalk installer; edits between these lines are overwritten)
+[mcp_servers.agent-hub]
+url = "https://agentstalk-production.up.railway.app/mcp"
+http_headers_helper = 'node "$(git rev-parse --show-toplevel)/agentstalk/hook.mjs" --headers'
+default_tools_approval_mode = "approve"
+
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = 'AGENTSTALK_TOOL=codex node "$(git rev-parse --show-toplevel)/agentstalk/hook.mjs"'
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = 'AGENTSTALK_TOOL=codex node "$(git rev-parse --show-toplevel)/agentstalk/hook.mjs"'
+
+[[hooks.PreToolUse]]
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = 'AGENTSTALK_TOOL=codex node "$(git rev-parse --show-toplevel)/agentstalk/hook.mjs"'
+
+[[hooks.PostToolUse]]
+matcher = "^Bash$"
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = 'AGENTSTALK_TOOL=codex node "$(git rev-parse --show-toplevel)/agentstalk/hook.mjs"'
+
+# agentsTalk end

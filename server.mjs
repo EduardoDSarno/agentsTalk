@@ -125,12 +125,13 @@ async function signIn({ githubToken, repo }) {
 }
 
 /**
- * Works out who is calling from the Authorization header: a personal key
- * (person and project come from it) or the admin token. Returns null for
- * anyone else.
+ * Works out who is calling from the Authorization header (or X-Agentstalk-Key,
+ * which Codex's header helper uses because it can't set Authorization): a
+ * personal key (person and project come from it) or the admin token.
+ * Returns null for anyone else.
  */
 function authenticate(req) {
-  const presented = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "").trim();
+  const presented = (req.headers["x-agentstalk-key"] ?? req.headers.authorization ?? "").replace(/^Bearer\s+/i, "").trim();
   if (!presented) return null;
   if (ADMIN_TOKEN && safeEqual(presented, ADMIN_TOKEN)) return { admin: true, login: "admin" };
   const record = store.keys[hashKey(presented)];

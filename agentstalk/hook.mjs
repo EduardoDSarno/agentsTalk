@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Claude Code hook for the agent hub. No dependencies: copy it into your project.
+// agentsTalk hook for Claude Code and Codex. No dependencies: copy it into your project.
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -13,28 +13,36 @@ const KEY = process.env.AGENT_HUB_KEY ?? GIT_SETTINGS.key ?? "";
 const BRANCH = currentBranch(process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
 const HUB_TIMEOUT_MS = 3000;
 const BLOCK_EXIT_CODE = 2;
-const LOCK_REASON = "editing with Claude Code";
+// Codex hooks set AGENTSTALK_TOOL=codex in their command (see the kit's .codex/config.toml).
+const IS_CODEX = process.env.AGENTSTALK_TOOL === "codex";
+const LOCK_REASON = `editing with ${IS_CODEX ? "Codex" : "Claude Code"}`;
 const SHELL_LOCK_REASON = "changed by a shell command";
 const RENAME_OR_COPY = /[RC]/;
+// Lines of a Codex apply_patch that name the files it changes.
+const PATCH_FILE_LINE = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm;
 // Set up means the setup script saved a personal key for this clone.
 const JOINED = Boolean(KEY);
 const NOT_JOINED_NOTICE = "agentsTalk (the team's shared chat, file locks and tasks) isn't set up in this clone yet. " +
   "At a good moment, tell the user once: run `node agentstalk` in a terminal in this repo; it signs them in with GitHub. " +
-  "Afterwards they start Claude with the `agentstalk` command so teammates can reach this session.";
+  "Afterwards they start their agent with the `agentstalk` command (or `agentstalk codex`) so teammates can reach this session.";
 
 await main();
 
 /**
- * Runs on Claude Code hook events. Before an edit it locks the file on the
- * hub and blocks the edit if a teammate holds it. At session start Claude
- * gets the full team status once; after that, on each prompt and tool call,
- * it only gets new chat messages that mention it, and nothing at all when
- * there are none, so the hub costs no tokens while it's quiet. After shell
- * commands it also checks which files actually changed, since a shell
- * command can edit files without going through the edit tools.
- * If the hub is unreachable it lets work continue instead of blocking it.
+ * Runs on Claude Code and Codex hook events. Before an edit it locks the file
+ * on the hub and blocks the edit if a teammate holds it. At session start the
+ * agent gets the full team status once; after that, on each prompt and tool
+ * call, it only gets new chat messages that mention it, and nothing at all
+ * when there are none, so the hub costs no tokens while it's quiet (Codex
+ * can't add context after a tool call, so it gets them before the next one).
+ * After shell commands it also checks which files actually changed, since a
+ * shell command can edit files without going through the edit tools. If the
+ * hub is unreachable it lets work continue instead of blocking it. With
+ * `--headers` it only prints the auth header, for Codex's MCP connection.
  */
 async function main() {
+  // Codex doesn't let its header helper set Authorization, so the key goes in a header of our own.
+  if (process.argv.includes("--headers")) return process.stdout.write(JSON.stringify({ "X-Agentstalk-Key": KEY }));
   const input = JSON.parse(await readStdin());
   const event = input.hook_event_name;
   if (!JOINED) {
@@ -43,34 +51,60 @@ async function main() {
     return;
   }
   try {
-    if (event === "PreToolUse") return await guardEdit(input);
+    if (event === "PreToolUse") {
+      await guardEdit(input);
+      return IS_CODEX ? addContext(event, await hub("GET", "/api/inbox")) : undefined;
+    }
     if (event === "PostToolUse" && input.tool_name === "Bash") await checkShellChanges(input);
     if (event === "SessionStart") return addContext(event, await hub("GET", "/api/status"));
-    if (event === "UserPromptSubmit" || event === "PostToolUse") return addContext(event, await hub("GET", "/api/inbox"));
+    if (event === "UserPromptSubmit" || (event === "PostToolUse" && !IS_CODEX)) return addContext(event, await hub("GET", "/api/inbox"));
   } catch (error) {
     console.error(`agent-hub unreachable (${error.message}); continuing without locks`);
   }
 }
 
-/** Hands text to Claude as extra context for this event; does nothing for empty text. */
+/** Hands text to the agent as extra context for this event; does nothing for empty text. */
 function addContext(hookEventName, text) {
   if (!text.trim()) return;
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: text } }));
 }
 
-/** Locks the file Claude is about to edit, or blocks the edit if someone else holds it. */
+/** Locks the files the agent is about to edit, or blocks the edit if someone else holds one of them. */
 async function guardEdit(input) {
-  const file = input.tool_input?.file_path ?? input.tool_input?.notebook_path;
-  if (!file) return;
-  const root = process.env.CLAUDE_PROJECT_DIR ?? input.cwd;
-  const relative = path.relative(root, path.resolve(root, file)).split(path.sep).join("/");
-  if (relative.startsWith("..")) return; // outside the shared project
-  const result = JSON.parse(await hub("POST", "/api/lock", { paths: [relative], reason: LOCK_REASON }));
-  const blocked = result.blocked?.[0];
-  if (!blocked) return;
-  console.error(`${blocked.path} is locked by ${blocked.owner} on this branch${blocked.reason ? ` (${blocked.reason})` : ""}. ` +
-    `Do not edit it. Work on something else, or ask @${blocked.owner} with the agent-hub say tool.`);
+  const files = editedFiles(input);
+  if (!files.length) return;
+  const root = repoRoot(input);
+  const relatives = files
+    .map((file) => path.relative(root, path.resolve(input.cwd ?? root, file)).split(path.sep).join("/"))
+    .filter((relative) => !relative.startsWith("..")); // outside the shared project
+  if (!relatives.length) return;
+  const result = JSON.parse(await hub("POST", "/api/lock", { paths: relatives, reason: LOCK_REASON }));
+  if (!result.blocked?.length) return;
+  const list = result.blocked.map((b) => `${b.path} is locked by ${b.owner} on this branch${b.reason ? ` (${b.reason})` : ""}`).join("; ");
+  console.error(`${list}. Do not edit ${result.blocked.length > 1 ? "them" : "it"}. ` +
+    `Work on something else, or ask @${result.blocked[0].owner} with the agent-hub say tool.`);
   process.exit(BLOCK_EXIT_CODE);
+}
+
+/**
+ * Lists the files an edit tool call is about to change: the file path Claude
+ * Code's edit tools carry, or the files named in a Codex apply_patch.
+ */
+function editedFiles(input) {
+  const args = input.tool_input ?? {};
+  if (input.tool_name === "apply_patch") return [...String(args.command ?? "").matchAll(PATCH_FILE_LINE)].map((match) => match[1].trim());
+  return [args.file_path ?? args.notebook_path].filter(Boolean);
+}
+
+/** The repo's top folder: Claude Code gives it directly, Codex only gives the session folder. */
+function repoRoot(input) {
+  if (process.env.CLAUDE_PROJECT_DIR) return process.env.CLAUDE_PROJECT_DIR;
+  const cwd = input.cwd ?? process.cwd();
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return cwd;
+  }
 }
 
 /**
@@ -80,7 +114,7 @@ async function guardEdit(input) {
  * no work is thrown away without Claude looking first.
  */
 async function checkShellChanges(input) {
-  const changed = changedFiles(process.env.CLAUDE_PROJECT_DIR ?? input.cwd);
+  const changed = changedFiles(repoRoot(input));
   if (!changed.length) return;
   const result = JSON.parse(await hub("POST", "/api/lock", { paths: changed, reason: SHELL_LOCK_REASON }));
   if (!result.blocked?.length) return;
@@ -120,7 +154,7 @@ async function hub(method, route, body) {
   return response.text();
 }
 
-/** Reads the JSON event Claude Code sends on standard input. */
+/** Reads the JSON event the agent sends on standard input. */
 async function readStdin() {
   let raw = "";
   for await (const chunk of process.stdin) raw += chunk;

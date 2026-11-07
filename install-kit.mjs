@@ -22,6 +22,17 @@ const HOOK_EVENTS = {
   PreToolUse: "Edit|Write|MultiEdit|NotebookEdit",
   PostToolUse: undefined,
 };
+// Codex hooks: tool events run for every tool (the hook decides what matters), shell checks only for Bash.
+const CODEX_HOOK_EVENTS = [
+  ["SessionStart"],
+  ["UserPromptSubmit"],
+  ["PreToolUse"],
+  ["PostToolUse", "^Bash$"],
+];
+const CODEX_HOOK_COMMAND = `AGENTSTALK_TOOL=codex node "$(git rev-parse --show-toplevel)/${KIT_FOLDER}/hook.mjs"`;
+const CODEX_HEADERS_COMMAND = `node "$(git rev-parse --show-toplevel)/${KIT_FOLDER}/hook.mjs" --headers`;
+const CODEX_BLOCK_START = "# agentsTalk begin (written by the agentsTalk installer; edits between these lines are overwritten)";
+const CODEX_BLOCK_END = "# agentsTalk end";
 const RULES_MARKER = "## Team coordination (agent-hub)";
 const RULES = `${RULES_MARKER}
 - Call the agent-hub \`status\` tool once when you start.
@@ -61,6 +72,7 @@ async function main() {
   await bundleChannel(path.join(kit, "channel.mjs"));
   writeJson(path.join(kit, "config.json"), { hubUrl: values.hub, repo: githubRepo });
   addHookSettings(path.join(repo, ".claude", "settings.json"));
+  addCodexConfig(path.join(repo, ".codex", "config.toml"), values.hub);
   addRules(path.join(repo, "AGENTS.md"));
 
   console.log(`Kit installed in ${path.resolve(repo)} for ${githubRepo ?? "a repo without a GitHub remote yet"}.`);
@@ -108,6 +120,41 @@ function addHookSettings(file) {
     entries.push({ ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: HOOK_COMMAND }] });
   }
   writeJson(file, settings);
+}
+
+/**
+ * Adds the hub connection and the hooks to the repo's Codex config, between
+ * marker lines so running the installer again replaces just this part and
+ * keeps whatever else the file holds. No secret goes in: the MCP connection
+ * gets its key from a helper that reads this clone's Git config.
+ */
+function addCodexConfig(file, hubUrl) {
+  const hooks = CODEX_HOOK_EVENTS.map(([event, matcher]) => [
+    `[[hooks.${event}]]`,
+    ...(matcher ? [`matcher = ${JSON.stringify(matcher)}`] : []),
+    `[[hooks.${event}.hooks]]`,
+    'type = "command"',
+    `command = '${CODEX_HOOK_COMMAND}'`,
+    "",
+  ].join("\n"));
+  const block = [
+    CODEX_BLOCK_START,
+    "[mcp_servers.agent-hub]",
+    `url = ${JSON.stringify(`${hubUrl.replace(/\/$/, "")}/mcp`)}`,
+    `http_headers_helper = '${CODEX_HEADERS_COMMAND}'`,
+    // The hub's tools only coordinate (chat, locks, tasks), so agents don't wait for approval on each call.
+    'default_tools_approval_mode = "approve"',
+    "",
+    ...hooks,
+    CODEX_BLOCK_END,
+    "",
+  ].join("\n");
+  const current = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  const start = current.indexOf(CODEX_BLOCK_START);
+  const end = current.indexOf(CODEX_BLOCK_END);
+  const kept = (start === -1 || end === -1 ? current : `${current.slice(0, start)}${current.slice(end + CODEX_BLOCK_END.length)}`).trim();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${kept}${kept ? "\n\n" : ""}${block}`);
 }
 
 /** Appends the coordination rules to AGENTS.md unless they are already there. */

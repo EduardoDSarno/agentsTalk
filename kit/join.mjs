@@ -55,8 +55,11 @@ async function main() {
 
   installPreCommit(root);
   const claudeReady = connectClaudeCode(root, key);
+  const codexReady = commandExists("codex");
+  if (codexReady) console.log("✓ Codex ready: its connection and hooks come with the repo (first time: trust the folder, then run /hooks to trust agentsTalk's hooks)");
+  if (!claudeReady && !codexReady) console.log("! Neither Claude Code nor Codex found; install one, then run this setup again.");
   const commandReady = installCommand();
-  printNextSteps(login, agent, key, claudeReady, commandReady);
+  printNextSteps(login, agent, key, { claudeReady, codexReady, commandReady });
 }
 
 /**
@@ -132,12 +135,7 @@ function installPreCommit(root) {
  * just refreshes them. Returns false when Claude Code isn't installed.
  */
 function connectClaudeCode(root, key) {
-  try {
-    execFileSync("claude", ["--version"], { stdio: "ignore" });
-  } catch {
-    console.log("! Claude Code not found; skipped. Install it, then run this setup again.");
-    return false;
-  }
+  if (!commandExists("claude")) return false;
   for (const name of ["agent-hub", "agent-hub-chat"]) claude(["mcp", "remove", name, "-s", "local"], root, true);
   claude(["mcp", "add", "--transport", "http", "-s", "local", "agent-hub", `${HUB_URL}/mcp`, "--header", `Authorization: Bearer ${key}`], root);
   claude(["mcp", "add", "agent-hub-chat", "-s", "local", "-e", `AGENT_HUB_URL=${HUB_URL}`, "-e", `AGENT_HUB_KEY=${key}`, "--", "node", CHANNEL_FILE], root);
@@ -169,27 +167,33 @@ function installCommand() {
 /** The shell script behind the `agentstalk` command. */
 function commandScript() {
   return `#!/bin/sh
-# agentsTalk: start Claude Code connected to your team, setting this clone up first if needed.
+# agentsTalk: start Claude Code (or Codex, with "codex") connected to your team, setting this clone up first if needed.
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "agentstalk: run this inside a team repo"; exit 1; }
 [ -f "$root/${KIT_FOLDER}/join.mjs" ] || { echo "agentstalk: this repo has no agentsTalk kit"; exit 1; }
 cd "$root" || exit 1
 if [ "$1" = "setup" ]; then shift; exec node ${KIT_FOLDER} "$@"; fi
 git config --get agenthub.key >/dev/null || node ${KIT_FOLDER} || exit 1
+if [ "$1" = "codex" ]; then shift; exec codex "$@"; fi
 exec claude ${CHANNEL_FLAG} "$@"
 `;
 }
 
 /** Prints how to start working, open the dashboard and connect other tools. */
-function printNextSteps(login, agent, key, claudeReady, commandReady) {
+function printNextSteps(login, agent, key, { claudeReady, codexReady, commandReady }) {
   console.log(`\nAll set, ${login}! Your agent is @${agent}.\n`);
   // The key goes after "#", which browsers never send to servers or keep in server logs.
   console.log(`Your dashboard link (personal, don't share it):\n  ${HUB_URL}/#key=${key}\n`);
+  const newTerminal = commandReady ? "" : " (open a new terminal first)";
   if (claudeReady) {
-    console.log(`Start working: type  ${COMMAND_NAME}  in this repo${commandReady ? "" : " (open a new terminal first)"}.`);
+    console.log(`Start Claude Code: type  ${COMMAND_NAME}  in this repo${newTerminal}.`);
     console.log("It starts Claude Code so teammates can wake it with @mentions.");
     console.log("(First time: pick \"I am using this for local development\".)\n");
   }
-  console.log("Using Cursor, Codex or another tool? Add an MCP server with:");
+  if (codexReady) {
+    console.log(`Start Codex: type  ${COMMAND_NAME} codex  in this repo${newTerminal}.`);
+    console.log("Codex can't be woken by @mentions; it sees them on its next action.\n");
+  }
+  console.log("Using Cursor or another tool? Add an MCP server with:");
   console.log(`  URL:    ${HUB_URL}/mcp`);
   console.log(`  Header: Authorization: Bearer ${key}\n`);
 }
@@ -243,6 +247,16 @@ function openInBrowser(url) {
     execFileSync(opener, [url], { stdio: "ignore" });
   } catch {
     // No browser available: the person uses the printed link.
+  }
+}
+
+/** Whether a command-line tool is installed, checked by asking for its version. */
+function commandExists(name) {
+  try {
+    execFileSync(name, ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
   }
 }
 

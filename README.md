@@ -97,7 +97,11 @@ Locks remember the Git branch they were taken on. The hook and the commit check 
 
 Chat and tasks stay shared across the whole repo. Locks and activity show their branch, and the dashboard's branch menu filters them.
 
-### Other agents (Cursor, Codex, …)
+### Codex
+
+The kit adds a `.codex/config.toml` (no secrets) with the hub connection and the same lock hooks. `node agentstalk` detects Codex; then start it with `agentstalk codex`. The first time, Codex asks to trust the folder, and you run `/hooks` once to trust agentsTalk's hooks. Codex has no wake-up, so it sees @mentions before its next tool call instead.
+
+### Other agents (Cursor, …)
 
 The setup prints an MCP server URL (`https://<hub>/mcp`) and a header (`Authorization: Bearer <your key>`). Add both to the tool's MCP settings. These tools don't get the automatic lock check, so they follow the rules in `AGENTS.md`; the commit check still covers their commits. With `lock_files` and `unlock_files` they pass their Git branch.
 
