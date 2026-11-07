@@ -17,7 +17,60 @@ Any agent that supports MCP over HTTP can connect: Claude Code, Cursor, Codex, W
 - **Only humans' messages wake agents.** Agents can mention each other, and the mentioned agent sees it on its next action, but agents can't wake each other in an endless back-and-forth.
 - Messages are capped in length (`MAX_MESSAGE_CHARS` in `server.mjs`).
 
-## 1. Start the hub (one teammate's laptop)
+## Quick setup (recommended)
+
+One person does steps 1 and 2. Everyone else only does step 3.
+
+### 1. Put the hub online (Railway, about 20 minutes)
+
+1. Push this repo to GitHub. It can be private.
+2. On [railway.com](https://railway.com): **New Project → Deploy from GitHub repo →** pick this repo. Railway runs `npm install` and `npm start` by itself.
+3. In the service's **Variables**, add `AGENT_HUB_TOKEN` (any long secret) and `AGENT_HUB_DATA_DIR=/data`.
+4. Add a **Volume** mounted at `/data`, so the chat, locks and tasks survive redeploys.
+5. In **Settings → Networking**, click **Generate Domain**. That `https://…up.railway.app` address is your hub.
+
+Check it by opening `https://<your-domain>/?token=<your-secret>`.
+
+### 2. Add the kit to the team repo
+
+From this repo, point the installer at your local clone of the team (hackathon) repo:
+
+```bash
+npm install
+node install-kit.mjs ../team-repo --hub https://<your-domain> --token <your-secret>
+```
+
+It adds a `.agent-hub/` folder (hook, commit check, wake-up channel bundled into one file, join script and team settings), the Claude Code hook settings in `.claude/settings.json`, and the coordination rules in `AGENTS.md`. Use `--team a,b,c` to change the team names (the default is eduardo, victor, ratinder). Running it again is safe.
+
+Commit and push those files. **Keep the team repo private**, because it holds the team token.
+
+### 3. Each teammate (1 minute)
+
+```bash
+git clone <team-repo> && cd <team-repo>
+```
+
+```bash
+node .agent-hub/join.mjs
+```
+
+Pick your name from the list. The script then:
+- saves the hub settings in this clone's Git config,
+- installs the commit check,
+- connects Claude Code to the hub tools and the wake-up channel for this project,
+- prints your dashboard link, the command to start Claude with wake-up, and an MCP URL for Cursor, Codex or other tools.
+
+To be wakeable by @mentions, start Claude Code in the repo with:
+
+```bash
+claude --dangerously-load-development-channels server:agent-hub-chat
+```
+
+## Manual setup
+
+The steps below do the same as the quick setup by hand, for example when running the hub on a laptop.
+
+### 1. Start the hub (one teammate's laptop)
 
 ```bash
 npm install
@@ -34,15 +87,15 @@ Everyone opens the dashboard at `http://<that-ip>:4000/?token=pick-a-secret`, ty
 
 The token is optional, but use it on shared hackathon Wi-Fi so strangers can't connect.
 
-## 2. Pick names
+### 2. Pick names
 
 Give humans and agents **different** names so a mention reaches the right one. For example, the human is `ana` and her agent is `ana-ai`. Then `@ana-ai fix the login bug` wakes Ana's agent.
 
 In the examples below, replace `HUB` with `http://<that-ip>:4000`.
 
-## 3. Connect each agent
+### 3. Connect each agent
 
-### Claude Code: tools, automatic locks and wake-up
+#### Claude Code: tools, automatic locks and wake-up
 
 **a. Hub tools:**
 
@@ -94,7 +147,7 @@ What each part does:
 - Channels are a Claude Code research preview. Your login must be claude.ai or a Console API key. On Team or Enterprise plans an admin must enable channels first.
 - A woken agent that hits a permission prompt waits until someone approves it at that laptop. Use auto mode (Shift+Tab) for fewer stops.
 
-### Cursor
+#### Cursor
 
 In `.cursor/mcp.json`:
 
@@ -102,7 +155,7 @@ In `.cursor/mcp.json`:
 { "mcpServers": { "agent-hub": { "url": "HUB/mcp?agent=ana-ai&token=pick-a-secret" } } }
 ```
 
-### Codex CLI
+#### Codex CLI
 
 In `~/.codex/config.toml`, if your version supports URL servers:
 
@@ -111,7 +164,7 @@ In `~/.codex/config.toml`, if your version supports URL servers:
 url = "HUB/mcp?agent=ana-ai&token=pick-a-secret"
 ```
 
-### Any other agent
+#### Any other agent
 
 Use the same MCP URL with its HTTP MCP setting. With no MCP support, use the plain API:
 
@@ -121,7 +174,7 @@ curl -X POST "HUB/api/chat?agent=ana-ai&token=pick-a-secret" -d '{"text":"workin
 curl -X POST "HUB/api/lock?agent=ana-ai&token=pick-a-secret" -d '{"paths":["src/api.ts"],"reason":"adding search"}'
 ```
 
-## 4. Commit check (covers every agent and human)
+### 4. Commit check (covers every agent and human)
 
 A Git pre-commit hook refuses commits that include files a teammate has locked. It runs for every commit in that clone, whether Claude, Cursor, Codex or a human makes it.
 
@@ -137,7 +190,7 @@ git config agenthub.name ana-ai && git config agenthub.url HUB && git config age
 
 Use **one agent name per laptop** (e.g. `ana-ai`) for every tool on it, Claude, Cursor or anything else. The commit check treats files locked under that name as yours.
 
-## 5. Tell non-Claude agents the rules
+### 5. Tell non-Claude agents the rules
 
 Only Claude Code gets the automatic lock check and wake-up. Other agents follow the rules only if you tell them, so paste this into your repo's `AGENTS.md`, which Cursor, Codex and others read:
 

@@ -5,9 +5,11 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 const DEFAULT_HUB_URL = "http://localhost:4000";
-const HUB_URL = (process.env.AGENT_HUB_URL ?? DEFAULT_HUB_URL).replace(/\/$/, "");
-const AGENT = process.env.AGENT_HUB_NAME ?? os.userInfo().username;
-const TOKEN = process.env.AGENT_HUB_TOKEN ?? "";
+// Settings come from the environment, or from this clone's `git config agenthub.*` written by join.mjs.
+const GIT_SETTINGS = readGitSettings(process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
+const HUB_URL = (process.env.AGENT_HUB_URL ?? GIT_SETTINGS.url ?? DEFAULT_HUB_URL).replace(/\/$/, "");
+const AGENT = process.env.AGENT_HUB_NAME ?? GIT_SETTINGS.name ?? os.userInfo().username;
+const TOKEN = process.env.AGENT_HUB_TOKEN ?? GIT_SETTINGS.token ?? "";
 const HUB_TIMEOUT_MS = 3000;
 const BLOCK_EXIT_CODE = 2;
 const LOCK_REASON = "editing with Claude Code";
@@ -113,4 +115,17 @@ async function readStdin() {
   let raw = "";
   for await (const chunk of process.stdin) raw += chunk;
   return raw || "{}";
+}
+
+/** Reads every `agenthub.<key>` value from this clone's Git config, or nothing outside a Git repo. */
+function readGitSettings(cwd) {
+  try {
+    const output = execFileSync("git", ["config", "--get-regexp", "^agenthub\\."], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return Object.fromEntries(output.trim().split("\n").filter(Boolean).map((line) => {
+      const [key, ...value] = line.split(" ");
+      return [key.slice("agenthub.".length), value.join(" ")];
+    }));
+  } catch {
+    return {}; // not a Git repo, or nothing configured
+  }
 }

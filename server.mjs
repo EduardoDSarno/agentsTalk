@@ -7,7 +7,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 
 const DEFAULT_PORT = 4000;
-const PORT = Number(process.env.AGENT_HUB_PORT ?? DEFAULT_PORT);
+// Cloud hosts such as Railway assign the port through PORT.
+const PORT = Number(process.env.PORT ?? process.env.AGENT_HUB_PORT ?? DEFAULT_PORT);
 const TEAM_TOKEN = process.env.AGENT_HUB_TOKEN ?? "";
 const LOCK_TTL_MINUTES = 20;
 const LOCK_TTL_MS = LOCK_TTL_MINUTES * 60_000;
@@ -23,7 +24,8 @@ const EVERYONE = "all";
 const UNKNOWN_AGENT = "unknown";
 const MENTION_PATTERN = /@([a-z0-9_-]+)/gi;
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const STATE_FILE = path.join(DIR, "state.json");
+// On a cloud host, point AGENT_HUB_DATA_DIR at a mounted disk so data survives redeploys.
+const STATE_FILE = path.join(process.env.AGENT_HUB_DATA_DIR ?? DIR, "state.json");
 const DASHBOARD_FILE = path.join(DIR, "dashboard.html");
 
 const state = loadState();
