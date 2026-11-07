@@ -90,7 +90,16 @@
   .row { padding: 5px 16px; column-gap: 10px; display: grid; }
   .row:hover { background: var(--hover); }
   .lock-row { grid-template-columns: 14px minmax(0, 1fr) auto; }
-  .task-row { grid-template-columns: 14px 22px minmax(0, 1fr) auto; column-gap: 8px; }
+  .task-row { grid-template-columns: 14px 22px minmax(0, 1fr); column-gap: 8px; }
+  .task-owner { overflow-wrap: anywhere; }
+  .task-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .task-button { padding: 3px 8px !important; border: 1px solid var(--border) !important; border-radius: 5px; font-size: 12px !important; }
+  .task-button:not(:disabled):hover { background: var(--active); }
+  .task-button:disabled { opacity: .45; }
+  .task-form { display: flex; gap: 6px; padding: 0 16px 10px; }
+  .task-input { min-width: 0; width: 100%; border: 1px solid var(--border); border-radius: 5px; background: var(--hover); color: var(--fg); padding: 5px 7px; font: inherit; font-size: 12px; }
+  .task-note { display: block; margin-top: 6px; font-size: 12px; color: var(--fg2); }
+  .task-error { padding: 0 16px 8px; color: var(--warn); font-size: 12px; }
   .member-row { display: flex; align-items: flex-start; gap: 9px; padding: 8px 16px; }
   .member-row > .dot { margin-top: 7px; }
   .member-main { min-width: 0; flex: 1; }
@@ -183,6 +192,11 @@
       </section>
       <section>
         <div class="sec-head"><h2>Tasks</h2><span class="tn small muted" id="task-count"></span></div>
+        <form class="task-form" id="task-form">
+          <input class="task-input" id="task-title" aria-label="New task title" placeholder="Add a task…" required disabled>
+          <button class="task-button" id="task-add" type="submit" disabled>Add</button>
+        </form>
+        <div class="task-error" id="task-error" role="alert" hidden></div>
         <div id="tasks"></div>
       </section>
       <section>
@@ -214,7 +228,7 @@
   const GROUP_WINDOW_MS = 5 * 60_000;
   const NAME_KEY = "agent-hub-name";
   const THEME_KEY = "agent-hub-theme";
-  const TASK_GROUPS = [["doing", "In progress"], ["todo", "Todo"], ["done", "Done"]];
+  const TASK_GROUPS = [["doing", "In progress"], ["blocked", "Blocked"], ["todo", "Todo"], ["done", "Done"]];
   // The project's people (from their GitHub names) and everyone @mentionable; filled from the hub.
   let teamMembers = [];
   let mentionable = [EVERYONE];
@@ -235,6 +249,10 @@
   let offline = false;
   let lastMessages = [];
   let chatKey = "";
+  let lastTasks = [];
+  let taskBusy = false;
+  let taskRenderKey = "";
+  const taskNotes = new Map();
   let suggestions = [];
   let selectedSuggestion = 0;
   let suggestionsDismissed = false;
@@ -256,6 +274,7 @@
     });
     setUpPicker();
     setUpComposer();
+    setUpTasks();
     $("theme-btn").addEventListener("click", () => applyTheme($("hub").classList.contains("light") ? "dark" : "light"));
     $("project").addEventListener("change", (event) => switchProject(event.target.value));
     $("branch").addEventListener("change", (event) => {
@@ -335,24 +354,105 @@
       </div>`).join("") : `<div class="none">No files locked</div>`;
   }
 
-  /** Shows tasks grouped by status, in progress first. */
+  /** Shows the task board without replacing a note field on unchanged polls. */
   function renderTasks(tasks) {
+    lastTasks = tasks;
+    const enabled = canChangeTasks();
+    $("task-title").disabled = !enabled;
+    $("task-add").disabled = !enabled;
     $("task-count").textContent = tasks.length;
+    const key = JSON.stringify([tasks, enabled, currentName]);
+    if (taskRenderKey === key) return;
+    taskRenderKey = key;
+    const focused = document.activeElement;
+    const focusedId = focused?.dataset?.taskNote;
+    const selection = focusedId ? [focused.selectionStart, focused.selectionEnd] : null;
     const groups = TASK_GROUPS.map(([status, label]) => ({ label, items: tasks.filter((t) => t.status === status) })).filter((g) => g.items.length);
     $("tasks").innerHTML = groups.length ? groups.map((g) => `
       <div style="padding-bottom:4px">
         <div class="group-label">${g.label}<span class="tn">${g.items.length}</span></div>
-        ${g.items.map((t) => `
-          <div class="row task-row">
+        ${g.items.map((t) => {
+          const heldByOther = t.owner && t.owner !== currentName && ["doing", "blocked"].includes(t.status);
+          const actions = heldByOther ? [] : t.status === "todo" ? [["doing", "Claim"]]
+            : t.status === "done" ? [["todo", "Reopen"]]
+            : [[t.status === "blocked" ? "doing" : "blocked", t.status === "blocked" ? "Resume" : "Block"], ["done", "Done"], ["todo", "Release"]];
+          return `<div class="row task-row">
             <span style="display:inline-flex;padding-top:3px">${TASK_ICONS[t.status] ?? TASK_ICONS.todo}</span>
-            <span class="mono tn muted lh">${t.id}</span>
+            <span class="mono tn muted lh">${esc(t.id)}</span>
             <div style="min-width:0">
               <div class="lh ${t.status === "done" ? "done-t" : ""}" style="overflow-wrap:anywhere">${esc(t.title)}</div>
-              ${t.note ? `<div class="small muted">${esc(t.note)}</div>` : ""}
+              <div class="small muted task-owner">${esc(t.owner || "Unassigned")}</div>
+              ${t.note ? `<div class="small muted" style="overflow-wrap:anywhere">${esc(t.note)}</div>` : ""}
+              ${actions.length ? `<label class="task-note">Note<input class="task-input" id="task-note-${esc(t.id)}" data-task-note="${esc(t.id)}" aria-label="Note for task #${esc(t.id)}" value="${esc(taskNotes.get(t.id) ?? t.note ?? "")}"${enabled ? "" : " disabled"}></label>
+              <div class="task-actions">${actions.map(([status, label]) => `<button type="button" class="task-button" data-task-id="${esc(t.id)}" data-status="${status}" aria-label="${label} task #${esc(t.id)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}</div>` : ""}
             </div>
-            <span class="small muted lh" style="white-space:nowrap">${esc(t.owner || "Unassigned")}</span>
-          </div>`).join("")}
+          </div>`;
+        }).join("")}
       </div>`).join("") : `<div class="none">No tasks yet</div>`;
+    if (focusedId) {
+      const field = $("task-note-" + focusedId);
+      if (field && !field.disabled) { field.focus(); field.setSelectionRange(...selection); }
+    }
+  }
+
+  function canChangeTasks() {
+    return Boolean(currentName && currentKey() && !offline && !taskBusy);
+  }
+
+  /** Handles task actions as the signed-in human; the server enforces ownership. */
+  function setUpTasks() {
+    $("task-form").addEventListener("submit", (event) => { event.preventDefault(); addDashboardTask(); });
+    $("tasks").addEventListener("input", (event) => {
+      if (event.target.dataset.taskNote) taskNotes.set(Number(event.target.dataset.taskNote), event.target.value);
+    });
+    $("tasks").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-task-id]");
+      if (button && !button.disabled) moveDashboardTask(Number(button.dataset.taskId), button.dataset.status);
+    });
+  }
+
+  function taskError(message = "") {
+    $("task-error").textContent = message;
+    $("task-error").hidden = !message;
+  }
+
+  async function addDashboardTask() {
+    const title = $("task-title").value.trim();
+    if (!title || !canChangeTasks()) return;
+    if (await saveTask("/api/tasks", { title })) $("task-title").value = "";
+  }
+
+  async function moveDashboardTask(id, status) {
+    if (!canChangeTasks()) return;
+    const task = lastTasks.find((t) => t.id === id);
+    if (!task) return;
+    const note = (taskNotes.get(id) ?? task.note ?? "").trim();
+    if (status === "blocked" && !note) return taskError("Add a note explaining why this task is blocked.");
+    if (await saveTask(`/api/tasks/${id}`, { status, note })) taskNotes.delete(id);
+  }
+
+  /** A conflict is shown inline; it does not disconnect the dashboard or discard the note. */
+  async function saveTask(path, body) {
+    const requestProject = project;
+    taskBusy = true;
+    taskError();
+    renderTasks(lastTasks);
+    try {
+      const query = isAdmin ? `as=human&agent=${encodeURIComponent(currentName)}` : "as=human";
+      const response = await hubFetch(`${path}?${query}`, { method: "POST", body: JSON.stringify(body) });
+      const result = await response.json().catch(() => ({}));
+      if (project !== requestProject) return false;
+      if (!response.ok) throw new Error(result.error || `Task update failed (${response.status}).`);
+      lastTasks = lastTasks.filter((t) => t.id !== result.id).concat(result);
+      refresh();
+      return true;
+    } catch (error) {
+      if (project === requestProject) taskError(error.message || "Could not update the task. Try again.");
+      return false;
+    } finally {
+      taskBusy = false;
+      renderTasks(lastTasks);
+    }
   }
 
   /** Shows the activity feed, with file paths and task numbers in monospace. */
@@ -459,6 +559,11 @@
     history.replaceState(null, "", `?${params}`);
     chatKey = "";
     lastMessages = [];
+    lastTasks = [];
+    taskNotes.clear();
+    taskError();
+    $("task-title").value = "";
+    renderTasks(lastTasks);
     await loadIdentity();
     refresh();
   }
@@ -609,6 +714,7 @@
     chatKey = "";
     renderChat();
     updateComposer();
+    renderTasks(lastTasks);
   }
 
   /** Shows or hides the offline banner and status, and pauses sending while offline. */
@@ -618,6 +724,7 @@
     $("conn").className = `conn${isOffline ? " soon" : ""}`;
     $("conn").innerHTML = `<span class="dot ${isOffline ? "dot-off" : "dot-live"}"></span>${isOffline ? "Offline" : "Live"}`;
     updateComposer();
+    renderTasks(lastTasks);
   }
 
   /** Switches between dark and light colors and remembers the choice. */
@@ -744,6 +851,7 @@
   const MOON_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg>';
   const TASK_ICONS = {
     todo: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="var(--icon)" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="5.5"/></svg>',
+    blocked: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="var(--warn)" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="5.5"/><path d="M5.5 4.5v5M8.5 4.5v5"/></svg>',
     doing: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.5" style="stroke:var(--acc-fg)" stroke-width="1.4"/><circle cx="7" cy="7" r="2.3" style="fill:var(--acc-fg)"/></svg>',
     done: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="var(--fg2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 7.3l2.7 2.6 5.7-6"/></svg>',
   };
