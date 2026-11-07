@@ -327,6 +327,7 @@ body { margin: 0; }
     setUpPicker();
     setUpComposer();
     setUpTasks();
+    setUpTeam();
     setUpPresence();
     setUpTabs();
     $("theme-btn").addEventListener("click", () => applyTheme($("hub").classList.contains("light") ? "dark" : "light"));
@@ -643,7 +644,7 @@ body { margin: 0; }
         <div class="mem">
           ${personAvatar(member.name, false, 20)}
           <div style="min-width:0">
-            <div class="l1"><span class="clip" style="font-weight:500">${esc(member.name)}</span><span style="flex:1"></span><span class="st st-${personStatus}" aria-hidden="true"></span><span class="sm mut">${STATUS_LABELS[personStatus]}</span></div>
+            <div class="l1"><span class="clip" style="font-weight:500">${esc(member.name)}</span><span style="flex:1"></span><span class="st st-${personStatus}" aria-hidden="true"></span><span class="sm mut">${STATUS_LABELS[personStatus]}</span>${canRemoveMember(member.name) ? `<button type="button" class="sbtn" style="height:22px;padding:0 6px;margin-left:6px" data-remove-member="${esc(member.name)}" aria-label="Remove ${esc(member.name)} from the project">Remove</button>` : ""}</div>
             <div class="l2" title="${esc(humanLine)}">${esc(humanLine)}</div>
           </div>
         </div>
@@ -656,6 +657,28 @@ body { margin: 0; }
         </div>
       </div>`;
     }).join("") : `<div class="sm mut" style="padding:4px 8px">No teammates yet</div>`;
+  }
+
+  /** Only the repo owner (the first part of owner/repo) can remove people, and never themselves. */
+  function canRemoveMember(name) {
+    const owner = (project || "").split("/")[0].toLowerCase();
+    return Boolean(owner) && (currentName || "").toLowerCase() === owner && name.toLowerCase() !== owner;
+  }
+
+  /** Asks the owner to confirm, then removes a person and their agent from the project through the hub. */
+  async function removeTeamMember(name) {
+    if (!canRemoveMember(name) || !confirm(`Remove ${name} and their agent from this project? Their key stops working and their locks are released.`)) return;
+    const response = await hubFetch("/api/members/remove", { method: "POST", body: JSON.stringify({ login: name }) });
+    if (!response.ok) alert((await response.json().catch(() => ({}))).error || "Could not remove them");
+    refresh();
+  }
+
+  /** Wires the Remove buttons in the team list. */
+  function setUpTeam() {
+    $("members").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-remove-member]");
+      if (button) removeTeamMember(button.dataset.removeMember);
+    });
   }
 
   /** A known status, or "away" for anything missing or unknown (older hubs). */
