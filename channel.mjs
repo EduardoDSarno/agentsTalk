@@ -9,6 +9,7 @@ const DEFAULT_HUB_URL = "http://localhost:4000";
 const HUB_URL = (process.env.AGENT_HUB_URL ?? DEFAULT_HUB_URL).replace(/\/$/, "");
 const AGENT = (process.env.AGENT_HUB_NAME ?? os.userInfo().username).toLowerCase();
 const TOKEN = process.env.AGENT_HUB_TOKEN ?? "";
+const PROJECT = process.env.AGENT_HUB_PROJECT ?? "";
 const RECONNECT_DELAY_MS = 5000;
 const EVENT_SEPARATOR = "\n\n";
 const DATA_PREFIX = "data: ";
@@ -100,5 +101,5 @@ async function callTool(request) {
 
 /** Builds a hub URL that identifies this agent and carries the team token. */
 function hubUrl(route) {
-  return `${HUB_URL}${route}?agent=${encodeURIComponent(AGENT)}&token=${encodeURIComponent(TOKEN)}`;
+  return `${HUB_URL}${route}?project=${encodeURIComponent(PROJECT)}&agent=${encodeURIComponent(AGENT)}&token=${encodeURIComponent(TOKEN)}`;
 }

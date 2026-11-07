@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { execFileSync } from "node:child_process";
 import { build } from "esbuild";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -41,26 +42,46 @@ await main();
 async function main() {
   const { positionals, values } = parseArgs({
     allowPositionals: true,
-    options: { hub: { type: "string" }, token: { type: "string" }, team: { type: "string", default: DEFAULT_TEAM } },
+    options: {
+      hub: { type: "string" },
+      token: { type: "string" },
+      team: { type: "string", default: DEFAULT_TEAM },
+      project: { type: "string" },
+    },
   });
   const repo = positionals[0];
   if (!repo || !values.hub || !values.token) {
-    console.error("Usage: node install-kit.mjs <path-to-team-repo> --hub <hub-url> --token <team-token> [--team a,b,c]");
+    console.error("Usage: node install-kit.mjs <path-to-team-repo> --hub <hub-url> --token <team-token> [--team a,b,c] [--project name]");
     process.exit(1);
   }
+  const project = (values.project ?? projectNameOf(repo)).toLowerCase();
   const kit = path.join(repo, KIT_FOLDER);
   fs.mkdirSync(kit, { recursive: true });
 
   for (const file of ["hook.mjs", "pre-commit.mjs", "kit/join.mjs"]) fs.copyFileSync(path.join(DIR, file), path.join(kit, path.basename(file)));
   await bundleChannel(path.join(kit, "channel.mjs"));
   const team = values.team.split(",").map((name) => name.trim().toLowerCase()).filter(Boolean);
-  writeJson(path.join(kit, "config.json"), { hubUrl: values.hub, token: values.token, team, agentSuffix: AGENT_SUFFIX });
+  writeJson(path.join(kit, "config.json"), { hubUrl: values.hub, token: values.token, project, team, agentSuffix: AGENT_SUFFIX });
   addHookSettings(path.join(repo, ".claude", "settings.json"));
   addRules(path.join(repo, "AGENTS.md"));
 
-  console.log(`Kit installed in ${path.resolve(repo)}.`);
+  console.log(`Kit installed in ${path.resolve(repo)} as project "${project}".`);
   console.log("Next: commit and push it (keep the repo private, it holds the team token).");
   console.log(`Teammates then clone the repo and run: node ${KIT_FOLDER}/join.mjs`);
+}
+
+/**
+ * Picks the project name the hub keeps this repo's chat and locks under: the
+ * GitHub repo name when there is an origin remote, so every clone agrees,
+ * otherwise the folder name.
+ */
+function projectNameOf(repo) {
+  try {
+    const remote = execFileSync("git", ["remote", "get-url", "origin"], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return path.basename(remote).replace(/\.git$/, "");
+  } catch {
+    return path.basename(path.resolve(repo));
+  }
 }
 
 /** Bundles the channel and its MCP dependency into one file, so teammates never run npm install. */

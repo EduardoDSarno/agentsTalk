@@ -10,6 +10,7 @@ const GIT_SETTINGS = readGitSettings(process.env.CLAUDE_PROJECT_DIR ?? process.c
 const HUB_URL = (process.env.AGENT_HUB_URL ?? GIT_SETTINGS.url ?? DEFAULT_HUB_URL).replace(/\/$/, "");
 const AGENT = process.env.AGENT_HUB_NAME ?? GIT_SETTINGS.name ?? os.userInfo().username;
 const TOKEN = process.env.AGENT_HUB_TOKEN ?? GIT_SETTINGS.token ?? "";
+const PROJECT = process.env.AGENT_HUB_PROJECT ?? GIT_SETTINGS.project ?? "";
 const HUB_TIMEOUT_MS = 3000;
 const BLOCK_EXIT_CODE = 2;
 const LOCK_REASON = "editing with Claude Code";
@@ -99,7 +100,7 @@ function changedFiles(root) {
 
 /** Calls the hub API as this agent and returns the response body as text. */
 async function hub(method, route, body) {
-  const url = `${HUB_URL}${route}?agent=${encodeURIComponent(AGENT)}&token=${encodeURIComponent(TOKEN)}`;
+  const url = `${HUB_URL}${route}?project=${encodeURIComponent(PROJECT)}&agent=${encodeURIComponent(AGENT)}&token=${encodeURIComponent(TOKEN)}`;
   const response = await fetch(url, {
     method,
     headers: { "content-type": "application/json" },

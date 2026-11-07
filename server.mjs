@@ -22,52 +22,61 @@ const HEARTBEAT_MS = 25_000;
 const TASK_STATUSES = ["todo", "doing", "done"];
 const EVERYONE = "all";
 const UNKNOWN_AGENT = "unknown";
+// Requests without a project (older kits) land here, so they keep working.
+const DEFAULT_PROJECT = "default";
+const PROJECT_NAME_PATTERN = /[^a-z0-9._-]/g;
 const MENTION_PATTERN = /@([a-z0-9_-]+)/gi;
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 // On a cloud host, point AGENT_HUB_DATA_DIR at a mounted disk so data survives redeploys.
 const STATE_FILE = path.join(process.env.AGENT_HUB_DATA_DIR ?? DIR, "state.json");
 const DASHBOARD_FILE = path.join(DIR, "dashboard.html");
 
-const state = loadState();
-/** Open wake-up streams per agent name, used by the Claude Code channel. */
+/** Every project's chat, locks, tasks and activity, keyed by project name. */
+const store = loadStore();
+/** Open wake-up streams per project, then per agent name, used by the Claude Code channel. */
 const wakeStreams = new Map();
 
 http.createServer(handleRequest).listen(PORT, () => {
-  console.log(`Agent hub running: dashboard at http://localhost:${PORT}/  MCP at http://localhost:${PORT}/mcp?agent=<name>`);
+  console.log(`Agent hub running: dashboard at http://localhost:${PORT}/  MCP at http://localhost:${PORT}/mcp?project=<repo>&agent=<name>`);
 });
 setInterval(sendHeartbeats, HEARTBEAT_MS);
 
 /**
  * Routes every HTTP request: the dashboard page, the JSON API used by hooks,
  * channels and the dashboard, and the MCP endpoint any agent can connect to.
- * The caller's name always comes from the `agent` query parameter.
+ * The `project` query parameter picks which repo's space to use, so one hub
+ * can serve several repos without their locks or chat mixing; `agent` is the
+ * caller's name.
  */
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const agent = cleanName(url.searchParams.get("agent"));
+  const project = cleanProject(url.searchParams.get("project"));
   try {
     if (url.pathname === "/") return sendFile(res, DASHBOARD_FILE);
     if (!isAuthorized(req, url)) return sendJson(res, 401, { error: "Wrong or missing team token" });
-    if (url.pathname === "/mcp") return await handleMcp(req, res, agent);
-    if (req.method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, snapshot());
-    if (req.method === "GET" && url.pathname === "/api/status") return sendText(res, statusText(agent));
-    if (req.method === "GET" && url.pathname === "/api/inbox") return sendText(res, formatMentions(takeMentions(agent)));
-    if (req.method === "GET" && url.pathname === "/api/wake") return openWakeStream(req, res, agent);
+    if (req.method === "GET" && url.pathname === "/api/projects") return sendJson(res, 200, listProjects());
+    const space = spaceFor(project);
+    if (url.pathname === "/mcp") return await handleMcp(req, res, space, project, agent);
+    if (req.method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, snapshot(space));
+    if (req.method === "GET" && url.pathname === "/api/status") return sendText(res, statusText(space, project, agent));
+    if (req.method === "GET" && url.pathname === "/api/inbox") return sendText(res, formatMentions(takeMentions(space, agent)));
+    if (req.method === "GET" && url.pathname === "/api/wake") return openWakeStream(req, res, project, agent);
     if (req.method === "POST" && url.pathname === "/api/chat") {
       const body = await readJson(req);
-      return sendJson(res, 200, publicMessage(postChat(agent, body.text, body.human === true)));
+      return sendJson(res, 200, publicMessage(postChat(project, agent, body.text, body.human === true)));
     }
     if (req.method === "POST" && url.pathname === "/api/lock") {
       const body = await readJson(req);
-      return sendJson(res, 200, lockFiles(agent, body.paths ?? [], body.reason));
+      return sendJson(res, 200, lockFiles(space, agent, body.paths ?? [], body.reason));
     }
     if (req.method === "POST" && url.pathname === "/api/check") {
       const body = await readJson(req);
-      return sendJson(res, 200, { blocked: findBlocked(agent, body.paths ?? []) });
+      return sendJson(res, 200, { blocked: findBlocked(space, agent, body.paths ?? []) });
     }
     if (req.method === "POST" && url.pathname === "/api/unlock") {
       const body = await readJson(req);
-      return sendJson(res, 200, unlockFiles(agent, body.paths));
+      return sendJson(res, 200, unlockFiles(space, agent, body.paths));
     }
     sendJson(res, 404, { error: "Not found" });
   } catch (error) {
@@ -77,10 +86,10 @@ async function handleRequest(req, res) {
 
 /**
  * Answers one MCP request. The server is stateless, so each request gets a
- * fresh MCP server bound to the calling agent's name.
+ * fresh MCP server bound to the calling agent and its project.
  */
-async function handleMcp(req, res, agent) {
-  const server = buildMcpServer(agent);
+async function handleMcp(req, res, space, project, agent) {
+  const server = buildMcpServer(space, project, agent);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   res.on("close", () => {
     transport.close();
@@ -93,62 +102,63 @@ async function handleMcp(req, res, agent) {
 
 /**
  * Declares the tools agents use to coordinate: see the team state, lock and
- * unlock files, manage tasks, and talk in the group chat.
+ * unlock files, manage tasks, and talk in the group chat of their project.
  */
-function buildMcpServer(agent) {
-  const server = new McpServer({ name: "agent-hub", version: "1.1.0" });
+function buildMcpServer(space, project, agent) {
+  const server = new McpServer({ name: "agent-hub", version: "1.2.0" });
 
   server.registerTool("status", {
     description: "Call this when you start. Shows file locks, tasks, chat messages that mention you, and recent team activity.",
-  }, async () => reply(statusText(agent)));
+  }, async () => reply(statusText(space, project, agent)));
 
   server.registerTool("lock_files", {
     description: "Lock files BEFORE editing them so teammates' agents don't edit them at the same time. Use paths relative to the repo root (e.g. src/api.ts). Do not edit files that come back as blocked.",
     inputSchema: { paths: z.array(z.string()).min(1), reason: z.string().describe("What you are changing") },
-  }, async ({ paths, reason }) => reply(formatLockResult(lockFiles(agent, paths, reason))));
+  }, async ({ paths, reason }) => reply(formatLockResult(lockFiles(space, agent, paths, reason))));
 
   server.registerTool("unlock_files", {
     description: "Release your locks after you have committed and pushed. Leave paths empty to release all your locks.",
     inputSchema: { paths: z.array(z.string()).optional() },
-  }, async ({ paths }) => reply(formatUnlockResult(unlockFiles(agent, paths))));
+  }, async ({ paths }) => reply(formatUnlockResult(unlockFiles(space, agent, paths))));
 
   server.registerTool("add_task", {
     description: "Add a task to the shared team board.",
     inputSchema: { title: z.string() },
-  }, async ({ title }) => reply(`Added task #${addTask(agent, title).id}`));
+  }, async ({ title }) => reply(`Added task #${addTask(space, agent, title).id}`));
 
   server.registerTool("update_task", {
     description: "Move a task. Setting it to 'doing' makes you its owner.",
     inputSchema: { id: z.number().int(), status: z.enum(TASK_STATUSES), note: z.string().optional() },
-  }, async ({ id, status, note }) => reply(`Task #${updateTask(agent, id, status, note).id} is now ${status}`));
+  }, async ({ id, status, note }) => reply(`Task #${updateTask(space, agent, id, status, note).id} is now ${status}`));
 
   server.registerTool("say", {
     description: `Post one short line in the team group chat, e.g. "working on the login form". Use @name to address a teammate or their agent, @${EVERYONE} for everyone. Don't post just to acknowledge.`,
     inputSchema: { text: z.string() },
-  }, async ({ text }) => reply(`Posted as #${postChat(agent, text).id}`));
+  }, async ({ text }) => reply(`Posted as #${postChat(project, agent, text).id}`));
 
   server.registerTool("read_chat", {
     description: "Read the latest group chat messages. Only use when you need more context than the messages that mention you.",
     inputSchema: { limit: z.number().int().min(1).max(CHAT_READ_MAX).optional() },
-  }, async ({ limit }) => reply(formatChat(state.messages.slice(-(limit ?? CHAT_READ_DEFAULT)))));
+  }, async ({ limit }) => reply(formatChat(space.messages.slice(-(limit ?? CHAT_READ_DEFAULT)))));
 
   return server;
 }
 
 /**
- * Adds a chat message, records who it mentions, and wakes any mentioned
- * Claude Code sessions. Only humans' messages wake agents, so two agents
- * can't keep waking each other and burn tokens in a loop.
+ * Adds a chat message to a project, records who it mentions, and wakes any
+ * mentioned Claude Code sessions in that project. Only humans' messages wake
+ * agents, so two agents can't keep waking each other and burn tokens in a loop.
  */
-function postChat(from, text, fromHuman = false) {
+function postChat(project, from, text, fromHuman = false) {
+  const space = spaceFor(project);
   const clean = String(text ?? "").trim().slice(0, MAX_MESSAGE_CHARS);
   if (!clean) throw new Error("Message is empty");
   const mentions = [...new Set([...clean.matchAll(MENTION_PATTERN)].map((match) => match[1].toLowerCase()))];
-  const message = { id: state.nextMessageId++, at: Date.now(), from, text: clean, mentions, fromHuman, readBy: [] };
-  state.messages.push(message);
-  state.messages = state.messages.slice(-MAX_MESSAGES);
-  saveState();
-  deliverWakeUps();
+  const message = { id: space.nextMessageId++, at: Date.now(), from, text: clean, mentions, fromHuman, readBy: [] };
+  space.messages.push(message);
+  space.messages = space.messages.slice(-MAX_MESSAGES);
+  saveStore();
+  deliverWakeUps(project);
   return message;
 }
 
@@ -157,32 +167,35 @@ function postChat(from, text, fromHuman = false) {
  * hasn't received yet, and marks them received. Agents only ever get these,
  * never the whole chat, which keeps their token use low.
  */
-function takeMentions(agent, humanOnly = false) {
-  const fresh = state.messages.filter((m) =>
+function takeMentions(space, agent, humanOnly = false) {
+  const fresh = space.messages.filter((m) =>
     m.from !== agent
     && !m.readBy.includes(agent)
     && (m.mentions.includes(agent) || m.mentions.includes(EVERYONE))
     && (!humanOnly || m.fromHuman));
   for (const message of fresh) message.readBy.push(agent);
-  if (fresh.length) saveState();
+  if (fresh.length) saveStore();
   return fresh;
 }
 
 /** Keeps a stream open for a Claude Code channel and sends any waiting mentions. */
-function openWakeStream(req, res, agent) {
+function openWakeStream(req, res, project, agent) {
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
   res.write(": connected\n\n");
-  if (!wakeStreams.has(agent)) wakeStreams.set(agent, new Set());
-  wakeStreams.get(agent).add(res);
-  req.on("close", () => wakeStreams.get(agent)?.delete(res));
-  deliverWakeUps();
+  if (!wakeStreams.has(project)) wakeStreams.set(project, new Map());
+  const agents = wakeStreams.get(project);
+  if (!agents.has(agent)) agents.set(agent, new Set());
+  agents.get(agent).add(res);
+  req.on("close", () => agents.get(agent)?.delete(res));
+  deliverWakeUps(project);
 }
 
-/** Pushes new human mentions to every connected channel whose agent is mentioned. */
-function deliverWakeUps() {
-  for (const [agent, streams] of wakeStreams) {
+/** Pushes new human mentions to every connected channel in the project whose agent is mentioned. */
+function deliverWakeUps(project) {
+  const space = spaceFor(project);
+  for (const [agent, streams] of wakeStreams.get(project) ?? []) {
     if (!streams.size) continue;
-    const mentions = takeMentions(agent, true);
+    const mentions = takeMentions(space, agent, true);
     if (!mentions.length) continue;
     const data = `data: ${JSON.stringify(mentions.map(publicMessage))}\n\n`;
     for (const res of streams) res.write(data);
@@ -194,22 +207,22 @@ function deliverWakeUps() {
  * on it. Re-locking your own file extends its expiry, which keeps a lock
  * alive while you keep editing.
  */
-function lockFiles(agent, paths, reason = "") {
-  pruneExpiredLocks();
+function lockFiles(space, agent, paths, reason = "") {
+  pruneExpiredLocks(space);
   const granted = [];
   const blocked = [];
   for (const raw of paths) {
     const file = normalizePath(raw);
-    const lock = state.locks[file];
+    const lock = space.locks[file];
     if (lock && lock.owner !== agent) {
       blocked.push({ path: file, owner: lock.owner, reason: lock.reason });
       continue;
     }
-    if (!lock) logEvent(agent, `locked ${file}${reason ? ` (${reason})` : ""}`);
-    state.locks[file] = { owner: agent, reason: reason || lock?.reason || "", expiresAt: Date.now() + LOCK_TTL_MS };
+    if (!lock) logEvent(space, agent, `locked ${file}${reason ? ` (${reason})` : ""}`);
+    space.locks[file] = { owner: agent, reason: reason || lock?.reason || "", expiresAt: Date.now() + LOCK_TTL_MS };
     granted.push(file);
   }
-  saveState();
+  saveStore();
   return { granted, blocked };
 }
 
@@ -217,67 +230,67 @@ function lockFiles(agent, paths, reason = "") {
  * Lists which of these files someone else has locked, without locking
  * anything. The Git pre-commit check uses it to refuse such commits.
  */
-function findBlocked(agent, paths) {
-  pruneExpiredLocks();
+function findBlocked(space, agent, paths) {
+  pruneExpiredLocks(space);
   return paths.map(normalizePath)
-    .filter((file) => state.locks[file] && state.locks[file].owner !== agent)
-    .map((file) => ({ path: file, owner: state.locks[file].owner, reason: state.locks[file].reason }));
+    .filter((file) => space.locks[file] && space.locks[file].owner !== agent)
+    .map((file) => ({ path: file, owner: space.locks[file].owner, reason: space.locks[file].reason }));
 }
 
 /**
  * Releases the agent's own locks: the listed files, or all of them when no
  * list is given. Locks held by others are reported, never removed.
  */
-function unlockFiles(agent, paths) {
+function unlockFiles(space, agent, paths) {
   const targets = paths?.length
     ? paths.map(normalizePath)
-    : Object.keys(state.locks).filter((file) => state.locks[file].owner === agent);
+    : Object.keys(space.locks).filter((file) => space.locks[file].owner === agent);
   const released = [];
   const notYours = [];
   for (const file of targets) {
-    const lock = state.locks[file];
+    const lock = space.locks[file];
     if (!lock) continue;
     if (lock.owner !== agent) {
       notYours.push(file);
       continue;
     }
-    delete state.locks[file];
+    delete space.locks[file];
     released.push(file);
   }
-  if (released.length) logEvent(agent, `unlocked ${released.join(", ")}`);
-  saveState();
+  if (released.length) logEvent(space, agent, `unlocked ${released.join(", ")}`);
+  saveStore();
   return { released, notYours };
 }
 
-/** Adds a new task to the shared board in the first status column. */
-function addTask(agent, title) {
-  const task = { id: state.nextTaskId++, title, status: TASK_STATUSES[0], owner: "", note: "" };
-  state.tasks.push(task);
-  logEvent(agent, `added task #${task.id}: ${title}`);
-  saveState();
+/** Adds a new task to the project's board in the first status column. */
+function addTask(space, agent, title) {
+  const task = { id: space.nextTaskId++, title, status: TASK_STATUSES[0], owner: "", note: "" };
+  space.tasks.push(task);
+  logEvent(space, agent, `added task #${task.id}: ${title}`);
+  saveStore();
   return task;
 }
 
 /** Moves a task to a new status; starting work on it claims ownership. */
-function updateTask(agent, id, status, note) {
-  const task = state.tasks.find((candidate) => candidate.id === id);
+function updateTask(space, agent, id, status, note) {
+  const task = space.tasks.find((candidate) => candidate.id === id);
   if (!task) throw new Error(`Task #${id} does not exist`);
   task.status = status;
   if (status === "doing") task.owner = agent;
   if (note !== undefined) task.note = note;
-  logEvent(agent, `moved task #${id} to ${status}${note ? ` (${note})` : ""}`);
-  saveState();
+  logEvent(space, agent, `moved task #${id} to ${status}${note ? ` (${note})` : ""}`);
+  saveStore();
   return task;
 }
 
 /**
  * Builds the plain-text briefing agents read when they start: rules, locks,
- * tasks, messages that mention them and recent activity.
+ * tasks, messages that mention them and recent activity in their project.
  */
-function statusText(agent) {
-  const { locks, tasks, events } = snapshot();
+function statusText(space, project, agent) {
+  const { locks, tasks, events } = snapshot(space);
   const lines = [
-    `TEAM AGENT HUB — you are "${agent}".`,
+    `TEAM AGENT HUB — project "${project}", you are "${agent}".`,
     "Rules: lock files before editing; never edit a file locked by someone else; unlock after you push. Post one short line with `say` when you start something; @name addresses someone.",
     "",
     "File locks:",
@@ -286,7 +299,7 @@ function statusText(agent) {
     "Tasks:",
     ...(tasks.length ? tasks.map((t) => `- #${t.id} [${t.status}] ${t.title}${t.owner ? ` — ${t.owner}` : ""}${t.note ? ` (${t.note})` : ""}`) : ["- none"]),
     "",
-    formatMentions(takeMentions(agent)) || "No new chat messages for you.",
+    formatMentions(takeMentions(space, agent)) || "No new chat messages for you.",
     "",
     "Recent activity:",
     ...events.slice(0, RECENT_EVENTS_IN_STATUS).map((e) => `- ${e.agent}: ${e.text}`),
@@ -294,21 +307,44 @@ function statusText(agent) {
   return lines.join("\n");
 }
 
-/** Returns the whole team state for the dashboard, without expired locks. */
-function snapshot() {
-  pruneExpiredLocks();
+/** Returns one project's whole state for the dashboard, without expired locks. */
+function snapshot(space) {
+  pruneExpiredLocks(space);
   const now = Date.now();
   return {
-    locks: Object.entries(state.locks).map(([file, lock]) => ({
+    locks: Object.entries(space.locks).map(([file, lock]) => ({
       path: file,
       owner: lock.owner,
       reason: lock.reason,
       minutesLeft: Math.ceil((lock.expiresAt - now) / 60_000),
     })),
-    tasks: state.tasks,
-    events: [...state.events].reverse(),
-    messages: state.messages.map(publicMessage),
+    tasks: space.tasks,
+    events: [...space.events].reverse(),
+    messages: space.messages.map(publicMessage),
   };
+}
+
+/** Lists the projects that have any activity, most recently active first, for the dashboard's switcher. */
+function listProjects() {
+  return Object.entries(store.projects)
+    .map(([name, space]) => ({
+      name,
+      lastActivity: Math.max(0, space.events.at(-1)?.at ?? 0, space.messages.at(-1)?.at ?? 0),
+      locks: Object.keys(space.locks).length,
+    }))
+    .filter((project) => project.lastActivity > 0)
+    .sort((a, b) => b.lastActivity - a.lastActivity);
+}
+
+/** Returns a project's space, creating an empty one the first time the project is used. */
+function spaceFor(project) {
+  store.projects[project] ??= emptySpace();
+  return store.projects[project];
+}
+
+/** A new project's starting state. */
+function emptySpace() {
+  return { locks: {}, tasks: [], events: [], messages: [], nextTaskId: 1, nextMessageId: 1 };
 }
 
 /** Formats mentions for an agent, or returns an empty string when there are none. */
@@ -341,26 +377,28 @@ function formatUnlockResult({ released, notYours }) {
   return parts.join("\n");
 }
 
-/** Appends a line to the live activity feed, keeping only the newest events. */
-function logEvent(agent, text) {
-  state.events.push({ at: Date.now(), agent, text });
-  state.events = state.events.slice(-MAX_EVENTS);
+/** Appends a line to the project's live activity feed, keeping only the newest events. */
+function logEvent(space, agent, text) {
+  space.events.push({ at: Date.now(), agent, text });
+  space.events = space.events.slice(-MAX_EVENTS);
 }
 
 /** Drops locks whose time ran out, so a crashed session can't block a file forever. */
-function pruneExpiredLocks() {
+function pruneExpiredLocks(space) {
   const now = Date.now();
-  for (const [file, lock] of Object.entries(state.locks)) {
+  for (const [file, lock] of Object.entries(space.locks)) {
     if (lock.expiresAt <= now) {
-      delete state.locks[file];
-      logEvent(lock.owner, `lock on ${file} expired`);
+      delete space.locks[file];
+      logEvent(space, lock.owner, `lock on ${file} expired`);
     }
   }
 }
 
 /** Keeps idle wake-up streams from being closed by proxies or the OS. */
 function sendHeartbeats() {
-  for (const streams of wakeStreams.values()) for (const res of streams) res.write(": ping\n\n");
+  for (const agents of wakeStreams.values()) {
+    for (const streams of agents.values()) for (const res of streams) res.write(": ping\n\n");
+  }
 }
 
 /** Makes paths from different machines and agents comparable. */
@@ -371,6 +409,11 @@ function normalizePath(raw) {
 /** Makes names case-insensitive so "Ana" and "ana" are the same agent. */
 function cleanName(name) {
   return (name ?? "").trim().toLowerCase() || UNKNOWN_AGENT;
+}
+
+/** Turns a project name into a safe, case-insensitive key, falling back to the default project. */
+function cleanProject(name) {
+  return (name ?? "").trim().toLowerCase().replace(PROJECT_NAME_PATTERN, "-") || DEFAULT_PROJECT;
 }
 
 /** Checks the optional team token so strangers on the same network can't join. */
@@ -408,14 +451,18 @@ function sendFile(res, file) {
   res.end(fs.readFileSync(file));
 }
 
-/** Loads saved state so a server restart keeps tasks, locks and chat. */
-function loadState() {
-  const empty = { locks: {}, tasks: [], events: [], messages: [], nextTaskId: 1, nextMessageId: 1 };
-  if (!fs.existsSync(STATE_FILE)) return empty;
-  return { ...empty, ...JSON.parse(fs.readFileSync(STATE_FILE, "utf8")) };
+/**
+ * Loads saved state so a server restart keeps every project's tasks, locks
+ * and chat. A file from before projects existed becomes the default project.
+ */
+function loadStore() {
+  if (!fs.existsSync(STATE_FILE)) return { projects: {} };
+  const saved = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+  if (saved.projects) return saved;
+  return { projects: { [DEFAULT_PROJECT]: { ...emptySpace(), ...saved } } };
 }
 
-/** Writes the current state to disk after every change. */
-function saveState() {
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+/** Writes every project's state to disk after each change. */
+function saveStore() {
+  fs.writeFileSync(STATE_FILE, JSON.stringify(store, null, 2));
 }

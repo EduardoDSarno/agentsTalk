@@ -66,6 +66,14 @@ To be wakeable by @mentions, start Claude Code in the repo with:
 claude --dangerously-load-development-channels server:agent-hub-chat
 ```
 
+### Several repos on one hub
+
+Each repo is its own **project** on the hub, with its own chat, locks, tasks and activity, so `src/api.ts` in one repo never blocks `src/api.ts` in another. To add a repo, run step 2 on it. The installer names the project after the GitHub repo (or the folder), and `--project <name>` picks another name.
+
+Teammates run `join.mjs` once in each repo they work in. The dashboard's project menu, next to the Agent Hub name, switches between repos, and the join script's dashboard link opens the right one.
+
+Data from before projects existed is kept in a project called `default`.
+
 ## Manual setup
 
 The steps below do the same as the quick setup by hand, for example when running the hub on a laptop.

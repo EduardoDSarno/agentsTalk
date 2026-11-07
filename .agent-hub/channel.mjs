@@ -17048,6 +17048,7 @@ var DEFAULT_HUB_URL = "http://localhost:4000";
 var HUB_URL = (process.env.AGENT_HUB_URL ?? DEFAULT_HUB_URL).replace(/\/$/, "");
 var AGENT = (process.env.AGENT_HUB_NAME ?? os.userInfo().username).toLowerCase();
 var TOKEN = process.env.AGENT_HUB_TOKEN ?? "";
+var PROJECT = process.env.AGENT_HUB_PROJECT ?? "";
 var RECONNECT_DELAY_MS = 5e3;
 var EVENT_SEPARATOR = "\n\n";
 var DATA_PREFIX = "data: ";
@@ -17117,5 +17118,5 @@ async function callTool(request) {
   return { content: [{ type: "text", text: "sent" }] };
 }
 function hubUrl(route) {
-  return `${HUB_URL}${route}?agent=${encodeURIComponent(AGENT)}&token=${encodeURIComponent(TOKEN)}`;
+  return `${HUB_URL}${route}?project=${encodeURIComponent(PROJECT)}&agent=${encodeURIComponent(AGENT)}&token=${encodeURIComponent(TOKEN)}`;
 }

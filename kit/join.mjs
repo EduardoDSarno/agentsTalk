@@ -9,6 +9,8 @@ import { createInterface } from "node:readline/promises";
 const KIT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG = JSON.parse(fs.readFileSync(path.join(KIT_DIR, "config.json"), "utf8"));
 const HUB_URL = CONFIG.hubUrl.replace(/\/$/, "");
+// Kits made before projects existed have none; the hub then uses its default project.
+const PROJECT = CONFIG.project ?? "";
 const CHANNEL_FILE = path.join(KIT_DIR, "channel.mjs");
 const PRE_COMMIT_MARKER = "agent-hub";
 const PRE_COMMIT_SCRIPT = `#!/bin/sh\n# ${PRE_COMMIT_MARKER}: refuse commits of files a teammate has locked\nexec node "$(git rev-parse --show-toplevel)/.agent-hub/pre-commit.mjs"\n`;
@@ -26,10 +28,10 @@ async function main() {
   const human = await askWho();
   const agent = `${human}${CONFIG.agentSuffix}`;
 
-  for (const [key, value] of Object.entries({ url: HUB_URL, token: CONFIG.token, name: agent })) {
+  for (const [key, value] of Object.entries({ url: HUB_URL, token: CONFIG.token, project: PROJECT, name: agent })) {
     git(["config", `agenthub.${key}`, value], repo);
   }
-  console.log(`✓ This clone now talks to the hub as "${agent}"`);
+  console.log(`✓ This clone now talks to the hub as "${agent}" in project "${PROJECT || "default"}"`);
 
   installPreCommit(repo);
   const claudeReady = connectClaudeCode(repo, agent);
@@ -86,6 +88,7 @@ function connectClaudeCode(repo, agent) {
   claude(["mcp", "add", "--transport", "http", "-s", "local", "agent-hub", mcpUrl(agent)], repo);
   claude(["mcp", "add", "agent-hub-chat", "-s", "local",
     "-e", `AGENT_HUB_URL=${HUB_URL}`, "-e", `AGENT_HUB_NAME=${agent}`, "-e", `AGENT_HUB_TOKEN=${CONFIG.token}`,
+    "-e", `AGENT_HUB_PROJECT=${PROJECT}`,
     "--", "node", CHANNEL_FILE], repo);
   console.log("✓ Claude Code connected: team tools, automatic file locks and wake-up channel");
   return true;
@@ -93,7 +96,7 @@ function connectClaudeCode(repo, agent) {
 
 /** Prints how to start working, open the dashboard and connect other tools. */
 function printNextSteps(human, agent, claudeReady) {
-  const dashboard = `${HUB_URL}/?token=${encodeURIComponent(CONFIG.token)}`;
+  const dashboard = `${HUB_URL}/?project=${encodeURIComponent(PROJECT)}&token=${encodeURIComponent(CONFIG.token)}`;
   console.log(`\nAll set, ${human}! Your agent is @${agent}.\n`);
   console.log(`Team dashboard (open in your browser):\n  ${dashboard}\n`);
   if (claudeReady) {
@@ -107,7 +110,7 @@ function printNextSteps(human, agent, claudeReady) {
 
 /** Builds this agent's MCP address on the hub. */
 function mcpUrl(agent) {
-  return `${HUB_URL}/mcp?agent=${encodeURIComponent(agent)}&token=${encodeURIComponent(CONFIG.token)}`;
+  return `${HUB_URL}/mcp?project=${encodeURIComponent(PROJECT)}&agent=${encodeURIComponent(agent)}&token=${encodeURIComponent(CONFIG.token)}`;
 }
 
 /** Runs a Claude Code CLI command in the repo; `quiet` ignores failures such as removing a missing entry. */
