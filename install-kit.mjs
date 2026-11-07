@@ -9,7 +9,10 @@ import { execFileSync } from "node:child_process";
 import { build } from "esbuild";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const KIT_FOLDER = ".agent-hub";
+// A visible folder with a package.json, so teammates set up with just `node agenttalk`.
+const KIT_FOLDER = "agenttalk";
+// Where earlier versions put the kit; the installer moves it.
+const OLD_KIT_FOLDER = ".agent-hub";
 const AGENT_SUFFIX = "-agent";
 const DEFAULT_TEAM = "eduardo,victor,ratinder";
 const HOOK_COMMAND = `node "$CLAUDE_PROJECT_DIR/${KIT_FOLDER}/hook.mjs"`;
@@ -57,6 +60,9 @@ async function main() {
   const project = (values.project ?? projectNameOf(repo)).toLowerCase();
   const kit = path.join(repo, KIT_FOLDER);
   fs.mkdirSync(kit, { recursive: true });
+  fs.rmSync(path.join(repo, OLD_KIT_FOLDER), { recursive: true, force: true });
+  // Makes `node agenttalk` run the join script.
+  writeJson(path.join(kit, "package.json"), { name: "agenttalk-kit", private: true, type: "module", main: "join.mjs" });
 
   for (const file of ["hook.mjs", "pre-commit.mjs", "kit/join.mjs"]) fs.copyFileSync(path.join(DIR, file), path.join(kit, path.basename(file)));
   await bundleChannel(path.join(kit, "channel.mjs"));
@@ -67,7 +73,7 @@ async function main() {
 
   console.log(`Kit installed in ${path.resolve(repo)} as project "${project}".`);
   console.log("Next: commit and push it (keep the repo private, it holds the team token).");
-  console.log(`Teammates then clone the repo and run: node ${KIT_FOLDER}/join.mjs`);
+  console.log(`Teammates then clone the repo and run: node ${KIT_FOLDER}`);
 }
 
 /**
@@ -107,7 +113,8 @@ function addHookSettings(file) {
   const settings = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
   settings.hooks ??= {};
   for (const [event, matcher] of Object.entries(HOOK_EVENTS)) {
-    const entries = (settings.hooks[event] ??= []);
+    // Drop hook entries pointing at the old kit folder, then add ours once.
+    const entries = (settings.hooks[event] = (settings.hooks[event] ?? []).filter((entry) => !JSON.stringify(entry).includes(`${OLD_KIT_FOLDER}/hook.mjs`)));
     if (JSON.stringify(entries).includes(`${KIT_FOLDER}/hook.mjs`)) continue;
     entries.push({ ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: HOOK_COMMAND }] });
   }

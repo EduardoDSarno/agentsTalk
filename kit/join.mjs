@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// One-time setup for a teammate: run `node .agent-hub/join.mjs` inside your clone of the team repo.
+// One-time setup for a teammate: run `node agenttalk` inside your clone of the team repo.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ const HUB_URL = CONFIG.hubUrl.replace(/\/$/, "");
 const PROJECT = CONFIG.project ?? "";
 const CHANNEL_FILE = path.join(KIT_DIR, "channel.mjs");
 const PRE_COMMIT_MARKER = "agent-hub";
-const PRE_COMMIT_SCRIPT = `#!/bin/sh\n# ${PRE_COMMIT_MARKER}: refuse commits of files a teammate has locked\nexec node "$(git rev-parse --show-toplevel)/.agent-hub/pre-commit.mjs"\n`;
+const PRE_COMMIT_SCRIPT = `#!/bin/sh\n# ${PRE_COMMIT_MARKER}: refuse commits of files a teammate has locked\nexec node "$(git rev-parse --show-toplevel)/${path.basename(KIT_DIR)}/pre-commit.mjs"\n`;
 
 await main();
 

@@ -40,7 +40,7 @@ npm install
 node install-kit.mjs ../team-repo --hub https://<your-domain> --token <your-secret>
 ```
 
-It adds a `.agent-hub/` folder (hook, commit check, wake-up channel bundled into one file, join script and team settings), the Claude Code hook settings in `.claude/settings.json`, and the coordination rules in `AGENTS.md`. Use `--team a,b,c` to change the team names (the default is eduardo, victor, ratinder). Running it again is safe.
+It adds an `agenttalk/` folder (hook, commit check, wake-up channel bundled into one file, join script and team settings), the Claude Code hook settings in `.claude/settings.json`, and the coordination rules in `AGENTS.md`. Use `--team a,b,c` to change the team names (the default is eduardo, victor, ratinder). Running it again is safe.
 
 Commit and push those files. **Keep the team repo private**, because it holds the team token.
 
@@ -51,7 +51,7 @@ git clone <team-repo> && cd <team-repo>
 ```
 
 ```bash
-node .agent-hub/join.mjs
+node agenttalk
 ```
 
 Pick your name from the list. The script then:
@@ -120,15 +120,15 @@ In the examples below, replace `HUB` with `http://<that-ip>:4000`.
 claude mcp add --transport http agent-hub "HUB/mcp?agent=ana-agent&token=pick-a-secret"
 ```
 
-**b. Hook.** Commit `hook.mjs` into your hackathon repo at `.agent-hub/hook.mjs`, then add this to the repo's `.claude/settings.json`, which is shared:
+**b. Hook.** Commit `hook.mjs` into your hackathon repo at `agenttalk/hook.mjs`, then add this to the repo's `.claude/settings.json`, which is shared:
 
 ```json
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.agent-hub/hook.mjs\"" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.agent-hub/hook.mjs\"" }] }],
-    "PreToolUse": [{ "matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.agent-hub/hook.mjs\"" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.agent-hub/hook.mjs\"" }] }]
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agenttalk/hook.mjs\"" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agenttalk/hook.mjs\"" }] }],
+    "PreToolUse": [{ "matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agenttalk/hook.mjs\"" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agenttalk/hook.mjs\"" }] }]
   }
 }
 ```
@@ -195,10 +195,10 @@ curl -X POST "HUB/api/lock?agent=ana-agent&token=pick-a-secret" -d '{"paths":["s
 
 A Git pre-commit hook refuses commits that include files a teammate has locked. It runs for every commit in that clone, whether Claude, Cursor, Codex or a human makes it.
 
-Commit `pre-commit.mjs` into the hackathon repo at `.agent-hub/pre-commit.mjs`. Then each person runs this once in their clone:
+Commit `pre-commit.mjs` into the hackathon repo at `agenttalk/pre-commit.mjs`. Then each person runs this once in their clone:
 
 ```bash
-printf '#!/bin/sh\nexec node .agent-hub/pre-commit.mjs\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+printf '#!/bin/sh\nexec node agenttalk/pre-commit.mjs\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 ```
 
 ```bash
