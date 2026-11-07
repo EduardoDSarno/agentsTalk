@@ -120,6 +120,7 @@
     <span style="font-weight:500">Agent Hub</span>
     <span class="crumb" aria-hidden="true" style="color:var(--icon)">/</span>
     <h1 class="crumb" style="display:flex"><select id="project" class="project-select" aria-label="Project"></select></h1>
+    <select id="branch" class="project-select crumb" aria-label="Branch filter for locks and activity" style="font-weight:400;color:var(--fg2)"></select>
     <span class="muted team-size" id="team-size"></span>
     <div class="spacer"></div>
     <span role="status" class="conn" id="conn"><span class="dot dot-live"></span>Live</span>
@@ -204,6 +205,10 @@
   // The project (repo) this page shows; the join script's dashboard link sets it.
   let project = new URLSearchParams(location.search).get("project") || DEFAULT_PROJECT;
   let currentName = readStored(NAME_KEY);
+  // Which branch's locks and activity to show; "" shows all branches.
+  let branchFilter = "";
+  let lastLocks = [];
+  let lastEvents = [];
   let offline = false;
   let lastMessages = [];
   let chatKey = "";
@@ -217,6 +222,10 @@
     $("team-size").textContent = `${TEAM_MEMBERS.length} people · ${TEAM_MEMBERS.length} agents`;
     $("theme-btn").addEventListener("click", () => applyTheme($("hub").classList.contains("light") ? "dark" : "light"));
     $("project").addEventListener("change", (event) => switchProject(event.target.value));
+    $("branch").addEventListener("change", (event) => {
+      branchFilter = event.target.value;
+      renderSidePanels();
+    });
     refresh();
     setInterval(refresh, REFRESH_MS);
   }
@@ -230,10 +239,11 @@
       if (projectsResponse.ok) renderProjects(await projectsResponse.json());
       setOffline(false);
       lastMessages = messages;
+      lastLocks = locks;
+      lastEvents = events;
       renderChat();
-      renderLocks(locks);
+      renderSidePanels();
       renderTasks(tasks);
-      renderEvents(events);
     } catch {
       setOffline(true);
     }
@@ -281,7 +291,7 @@
         ${LOCK_ICON}
         <div style="min-width:0">
           <div class="mono clip lh">${esc(l.path)}</div>
-          <div class="small muted clip">${esc(l.owner)}${l.reason ? ` · ${esc(l.reason)}` : ""}</div>
+          <div class="small muted clip">${esc(l.owner)}${l.branch ? ` · <span class="mono">${esc(l.branch)}</span>` : ""}${l.reason ? ` · ${esc(l.reason)}` : ""}</div>
         </div>
         <span class="tn small muted lh${l.minutesLeft < SOON_MINUTES ? " soon" : ""}" aria-label="${l.minutesLeft} minutes left">${l.minutesLeft}m</span>
       </div>`).join("") : `<div class="none">No files locked</div>`;
@@ -318,10 +328,25 @@
             <span class="muted">${esc(verb)}</span>
             ${obj ? `<span class="mono">${esc(obj)}</span>` : ""}
             ${tail ? `<span class="muted">${esc(tail)}</span>` : ""}
+            ${e.branch ? `<span class="mono muted">on ${esc(e.branch)}</span>` : ""}
           </div>
           <span class="tn small muted lh">${time(e.at)}</span>
         </div>`;
     }).join("") : `<div class="none">No activity yet</div>`;
+  }
+
+  /**
+   * Redraws locks and activity for the chosen branch, and refreshes the
+   * branch menu from the branches that currently have locks or activity.
+   */
+  function renderSidePanels() {
+    const branches = [...new Set([...lastLocks.map((l) => l.branch), ...lastEvents.map((e) => e.branch)].filter(Boolean))].sort();
+    if (branchFilter && !branches.includes(branchFilter)) branches.unshift(branchFilter);
+    const html = [`<option value="">All branches</option>`, ...branches.map((b) => `<option value="${esc(b)}"${b === branchFilter ? " selected" : ""}>${esc(b)}</option>`)].join("");
+    if ($("branch").innerHTML !== html) $("branch").innerHTML = html;
+    const shown = (item) => !branchFilter || item.branch === branchFilter;
+    renderLocks(lastLocks.filter(shown));
+    renderEvents(lastEvents.filter(shown));
   }
 
   /**

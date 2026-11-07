@@ -74,6 +74,15 @@ Teammates run `join.mjs` once in each repo they work in. The dashboard's project
 
 Data from before projects existed is kept in a project called `default`.
 
+### Branches
+
+Locks remember the Git branch they were taken on. The hook and the commit check read the current branch on every call, so switching branches is picked up automatically.
+
+- **Same branch**: another agent's lock **blocks** the edit and the commit, because both would overwrite each other.
+- **Different branches**: the edit is **allowed**, and both agents get a one-time warning that a merge conflict is likely, so they can coordinate in the chat.
+
+Chat and tasks stay shared across the whole repo. Locks and activity show their branch, and the dashboard's branch menu filters them. Agents connected only through MCP (Cursor, Codex) pass their branch to `lock_files`.
+
 ## Manual setup
 
 The steps below do the same as the quick setup by hand, for example when running the hub on a laptop.

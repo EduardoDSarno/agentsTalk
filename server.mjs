@@ -52,6 +52,7 @@ async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const agent = cleanName(url.searchParams.get("agent"));
   const project = cleanProject(url.searchParams.get("project"));
+  const branch = cleanBranch(url.searchParams.get("branch"));
   try {
     if (url.pathname === "/") return sendFile(res, DASHBOARD_FILE);
     if (!isAuthorized(req, url)) return sendJson(res, 401, { error: "Wrong or missing team token" });
@@ -60,7 +61,7 @@ async function handleRequest(req, res) {
     if (url.pathname === "/mcp") return await handleMcp(req, res, space, project, agent);
     if (req.method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, snapshot(space));
     if (req.method === "GET" && url.pathname === "/api/status") return sendText(res, statusText(space, project, agent));
-    if (req.method === "GET" && url.pathname === "/api/inbox") return sendText(res, formatMentions(takeMentions(space, agent)));
+    if (req.method === "GET" && url.pathname === "/api/inbox") return sendText(res, formatInbox(space, agent));
     if (req.method === "GET" && url.pathname === "/api/wake") return openWakeStream(req, res, project, agent);
     if (req.method === "POST" && url.pathname === "/api/chat") {
       const body = await readJson(req);
@@ -68,15 +69,15 @@ async function handleRequest(req, res) {
     }
     if (req.method === "POST" && url.pathname === "/api/lock") {
       const body = await readJson(req);
-      return sendJson(res, 200, lockFiles(space, agent, body.paths ?? [], body.reason));
+      return sendJson(res, 200, lockFiles(space, agent, branch, body.paths ?? [], body.reason));
     }
     if (req.method === "POST" && url.pathname === "/api/check") {
       const body = await readJson(req);
-      return sendJson(res, 200, { blocked: findBlocked(space, agent, body.paths ?? []) });
+      return sendJson(res, 200, { blocked: findBlocked(space, agent, branch, body.paths ?? []) });
     }
     if (req.method === "POST" && url.pathname === "/api/unlock") {
       const body = await readJson(req);
-      return sendJson(res, 200, unlockFiles(space, agent, body.paths));
+      return sendJson(res, 200, unlockFiles(space, agent, url.searchParams.has("branch") ? branch : undefined, body.paths));
     }
     sendJson(res, 404, { error: "Not found" });
   } catch (error) {
@@ -111,15 +112,17 @@ function buildMcpServer(space, project, agent) {
     description: "Call this when you start. Shows file locks, tasks, chat messages that mention you, and recent team activity.",
   }, async () => reply(statusText(space, project, agent)));
 
+  const branchInput = z.string().optional().describe("Your current Git branch (git branch --show-current)");
+
   server.registerTool("lock_files", {
-    description: "Lock files BEFORE editing them so teammates' agents don't edit them at the same time. Use paths relative to the repo root (e.g. src/api.ts). Do not edit files that come back as blocked.",
-    inputSchema: { paths: z.array(z.string()).min(1), reason: z.string().describe("What you are changing") },
-  }, async ({ paths, reason }) => reply(formatLockResult(lockFiles(space, agent, paths, reason))));
+    description: "Lock files BEFORE editing them so teammates' agents don't edit them at the same time. Use paths relative to the repo root (e.g. src/api.ts) and pass your Git branch. Do not edit files that come back as blocked; a warning means someone changes the file on another branch, so a merge conflict is likely.",
+    inputSchema: { paths: z.array(z.string()).min(1), reason: z.string().describe("What you are changing"), branch: branchInput },
+  }, async ({ paths, reason, branch }) => reply(formatLockResult(lockFiles(space, agent, cleanBranch(branch), paths, reason))));
 
   server.registerTool("unlock_files", {
-    description: "Release your locks after you have committed and pushed. Leave paths empty to release all your locks.",
-    inputSchema: { paths: z.array(z.string()).optional() },
-  }, async ({ paths }) => reply(formatUnlockResult(unlockFiles(space, agent, paths))));
+    description: "Release your locks after you have committed and pushed. Leave paths empty to release all your locks; give a branch to release only that branch's locks.",
+    inputSchema: { paths: z.array(z.string()).optional(), branch: branchInput },
+  }, async ({ paths, branch }) => reply(formatUnlockResult(unlockFiles(space, agent, branch === undefined ? undefined : cleanBranch(branch), paths))));
 
   server.registerTool("add_task", {
     description: "Add a task to the shared team board.",
@@ -203,63 +206,92 @@ function deliverWakeUps(project) {
 }
 
 /**
- * Gives the agent each requested file unless another agent holds a live lock
- * on it. Re-locking your own file extends its expiry, which keeps a lock
- * alive while you keep editing.
+ * Locks each requested file for the agent on its branch. Another agent's
+ * lock on the same branch blocks it, since both would overwrite each other.
+ * Locks on other branches don't block, because that work only meets at
+ * merge time; instead both agents get a one-time warning that a merge
+ * conflict is likely. Re-locking your own file extends its expiry, which
+ * keeps a lock alive while you keep editing.
  */
-function lockFiles(space, agent, paths, reason = "") {
+function lockFiles(space, agent, branch, paths, reason = "") {
   pruneExpiredLocks(space);
   const granted = [];
   const blocked = [];
+  const warnings = [];
   for (const raw of paths) {
     const file = normalizePath(raw);
-    const lock = space.locks[file];
+    const byBranch = (space.locks[file] ??= {});
+    const lock = byBranch[branch];
     if (lock && lock.owner !== agent) {
-      blocked.push({ path: file, owner: lock.owner, reason: lock.reason });
+      blocked.push({ path: file, owner: lock.owner, reason: lock.reason, branch });
       continue;
     }
-    if (!lock) logEvent(space, agent, `locked ${file}${reason ? ` (${reason})` : ""}`);
-    space.locks[file] = { owner: agent, reason: reason || lock?.reason || "", expiresAt: Date.now() + LOCK_TTL_MS };
+    if (!lock) {
+      logEvent(space, agent, `locked ${file}${reason ? ` (${reason})` : ""}`, branch);
+      for (const [otherBranch, other] of Object.entries(byBranch)) {
+        if (other.owner === agent) continue;
+        warnings.push({ path: file, owner: other.owner, branch: otherBranch });
+        addNotice(space, other.owner, `${agent} started changing ${file} on ${branchLabel(branch)} while you change it on ${branchLabel(otherBranch)}. Expect a merge conflict; coordinate in the chat.`);
+      }
+    }
+    byBranch[branch] = { owner: agent, reason: reason || lock?.reason || "", expiresAt: Date.now() + LOCK_TTL_MS };
     granted.push(file);
   }
+  for (const w of warnings) addNotice(space, agent, `${w.owner} is also changing ${w.path} on ${branchLabel(w.branch)}. Expect a merge conflict; coordinate in the chat.`);
   saveStore();
-  return { granted, blocked };
+  return { granted, blocked, warnings };
 }
 
 /**
- * Lists which of these files someone else has locked, without locking
- * anything. The Git pre-commit check uses it to refuse such commits.
+ * Lists which of these files another agent has locked on the same branch,
+ * without locking anything. The Git pre-commit check uses it to refuse such
+ * commits; locks on other branches don't count.
  */
-function findBlocked(space, agent, paths) {
+function findBlocked(space, agent, branch, paths) {
   pruneExpiredLocks(space);
   return paths.map(normalizePath)
-    .filter((file) => space.locks[file] && space.locks[file].owner !== agent)
-    .map((file) => ({ path: file, owner: space.locks[file].owner, reason: space.locks[file].reason }));
+    .map((file) => ({ file, lock: space.locks[file]?.[branch] }))
+    .filter(({ lock }) => lock && lock.owner !== agent)
+    .map(({ file, lock }) => ({ path: file, owner: lock.owner, reason: lock.reason, branch }));
 }
 
 /**
  * Releases the agent's own locks: the listed files, or all of them when no
- * list is given. Locks held by others are reported, never removed.
+ * list is given, on one branch or, without a branch, on every branch.
+ * Locks held by others are reported, never removed.
  */
-function unlockFiles(space, agent, paths) {
-  const targets = paths?.length
-    ? paths.map(normalizePath)
-    : Object.keys(space.locks).filter((file) => space.locks[file].owner === agent);
+function unlockFiles(space, agent, branch, paths) {
+  const files = paths?.length ? paths.map(normalizePath) : Object.keys(space.locks);
   const released = [];
   const notYours = [];
-  for (const file of targets) {
-    const lock = space.locks[file];
-    if (!lock) continue;
-    if (lock.owner !== agent) {
-      notYours.push(file);
-      continue;
+  for (const file of files) {
+    for (const [lockBranch, lock] of Object.entries(space.locks[file] ?? {})) {
+      if (branch !== undefined && lockBranch !== branch) continue;
+      if (lock.owner !== agent) {
+        if (paths?.length) notYours.push(file);
+        continue;
+      }
+      delete space.locks[file][lockBranch];
+      released.push(file);
     }
-    delete space.locks[file];
-    released.push(file);
+    if (space.locks[file] && !Object.keys(space.locks[file]).length) delete space.locks[file];
   }
-  if (released.length) logEvent(space, agent, `unlocked ${released.join(", ")}`);
+  if (released.length) logEvent(space, agent, `unlocked ${[...new Set(released)].join(", ")}`, branch ?? "");
   saveStore();
-  return { released, notYours };
+  return { released: [...new Set(released)], notYours: [...new Set(notYours)] };
+}
+
+/** Queues a short message for an agent, delivered with its next inbox check. */
+function addNotice(space, agent, text) {
+  (space.notices[agent] ??= []).push(text);
+}
+
+/** Returns and clears the agent's queued notices. */
+function takeNotices(space, agent) {
+  const notices = space.notices[agent] ?? [];
+  delete space.notices[agent];
+  if (notices.length) saveStore();
+  return notices;
 }
 
 /** Adds a new task to the project's board in the first status column. */
@@ -294,12 +326,12 @@ function statusText(space, project, agent) {
     "Rules: lock files before editing; never edit a file locked by someone else; unlock after you push. Post one short line with `say` when you start something; @name addresses someone.",
     "",
     "File locks:",
-    ...(locks.length ? locks.map((l) => `- ${l.path} — ${l.owner}${l.reason ? ` (${l.reason})` : ""}, ${l.minutesLeft} min left`) : ["- none"]),
+    ...(locks.length ? locks.map((l) => `- ${l.path} — ${l.owner} on ${branchLabel(l.branch)}${l.reason ? ` (${l.reason})` : ""}, ${l.minutesLeft} min left`) : ["- none"]),
     "",
     "Tasks:",
     ...(tasks.length ? tasks.map((t) => `- #${t.id} [${t.status}] ${t.title}${t.owner ? ` — ${t.owner}` : ""}${t.note ? ` (${t.note})` : ""}`) : ["- none"]),
     "",
-    formatMentions(takeMentions(space, agent)) || "No new chat messages for you.",
+    formatInbox(space, agent) || "No new chat messages for you.",
     "",
     "Recent activity:",
     ...events.slice(0, RECENT_EVENTS_IN_STATUS).map((e) => `- ${e.agent}: ${e.text}`),
@@ -312,12 +344,13 @@ function snapshot(space) {
   pruneExpiredLocks(space);
   const now = Date.now();
   return {
-    locks: Object.entries(space.locks).map(([file, lock]) => ({
+    locks: Object.entries(space.locks).flatMap(([file, byBranch]) => Object.entries(byBranch).map(([branch, lock]) => ({
       path: file,
+      branch,
       owner: lock.owner,
       reason: lock.reason,
       minutesLeft: Math.ceil((lock.expiresAt - now) / 60_000),
-    })),
+    }))),
     tasks: space.tasks,
     events: [...space.events].reverse(),
     messages: space.messages.map(publicMessage),
@@ -344,7 +377,18 @@ function spaceFor(project) {
 
 /** A new project's starting state. */
 function emptySpace() {
-  return { locks: {}, tasks: [], events: [], messages: [], nextTaskId: 1, nextMessageId: 1 };
+  return { locks: {}, tasks: [], events: [], messages: [], notices: {}, nextTaskId: 1, nextMessageId: 1 };
+}
+
+/**
+ * Collects what's new for an agent, its chat mentions and hub notices such as
+ * cross-branch warnings, as one text; empty when there's nothing, so a quiet
+ * hub adds no tokens.
+ */
+function formatInbox(space, agent) {
+  const notices = takeNotices(space, agent);
+  return [formatMentions(takeMentions(space, agent)), notices.length ? `Hub notices:\n${notices.map((n) => `- ${n}`).join("\n")}` : ""]
+    .filter(Boolean).join("\n");
 }
 
 /** Formats mentions for an agent, or returns an empty string when there are none. */
@@ -363,10 +407,11 @@ function publicMessage({ readBy, ...message }) {
 }
 
 /** Turns a lock result into a sentence an agent can act on. */
-function formatLockResult({ granted, blocked }) {
+function formatLockResult({ granted, blocked, warnings }) {
   const parts = [];
   if (granted.length) parts.push(`Locked for you: ${granted.join(", ")}`);
-  for (const b of blocked) parts.push(`BLOCKED: ${b.path} is locked by ${b.owner}${b.reason ? ` (${b.reason})` : ""}. Do not edit it; work on something else or ask @${b.owner} with say.`);
+  for (const b of blocked) parts.push(`BLOCKED: ${b.path} is locked by ${b.owner} on ${branchLabel(b.branch)}${b.reason ? ` (${b.reason})` : ""}. Do not edit it; work on something else or ask @${b.owner} with say.`);
+  for (const w of warnings) parts.push(`WARNING: ${w.owner} is also changing ${w.path} on ${branchLabel(w.branch)}. You may edit it, but expect a merge conflict; coordinate with @${w.owner}.`);
   return parts.join("\n");
 }
 
@@ -377,21 +422,28 @@ function formatUnlockResult({ released, notYours }) {
   return parts.join("\n");
 }
 
-/** Appends a line to the project's live activity feed, keeping only the newest events. */
-function logEvent(space, agent, text) {
-  space.events.push({ at: Date.now(), agent, text });
+/** Appends a line to the project's live activity feed, tagged with its branch, keeping only the newest events. */
+function logEvent(space, agent, text, branch = "") {
+  space.events.push({ at: Date.now(), agent, text, branch });
   space.events = space.events.slice(-MAX_EVENTS);
 }
 
 /** Drops locks whose time ran out, so a crashed session can't block a file forever. */
 function pruneExpiredLocks(space) {
   const now = Date.now();
-  for (const [file, lock] of Object.entries(space.locks)) {
-    if (lock.expiresAt <= now) {
-      delete space.locks[file];
-      logEvent(space, lock.owner, `lock on ${file} expired`);
+  for (const [file, byBranch] of Object.entries(space.locks)) {
+    for (const [branch, lock] of Object.entries(byBranch)) {
+      if (lock.expiresAt > now) continue;
+      delete byBranch[branch];
+      logEvent(space, lock.owner, `lock on ${file} expired`, branch);
     }
+    if (!Object.keys(byBranch).length) delete space.locks[file];
   }
+}
+
+/** Names a branch for messages; locks from tools that don't report one share an unnamed branch. */
+function branchLabel(branch) {
+  return branch ? `branch ${branch}` : "an unnamed branch";
 }
 
 /** Keeps idle wake-up streams from being closed by proxies or the OS. */
@@ -414,6 +466,11 @@ function cleanName(name) {
 /** Turns a project name into a safe, case-insensitive key, falling back to the default project. */
 function cleanProject(name) {
   return (name ?? "").trim().toLowerCase().replace(PROJECT_NAME_PATTERN, "-") || DEFAULT_PROJECT;
+}
+
+/** Keeps branch names as Git writes them, minus surrounding spaces; no branch means "". */
+function cleanBranch(name) {
+  return (name ?? "").trim();
 }
 
 /** Checks the optional team token so strangers on the same network can't join. */
@@ -453,13 +510,21 @@ function sendFile(res, file) {
 
 /**
  * Loads saved state so a server restart keeps every project's tasks, locks
- * and chat. A file from before projects existed becomes the default project.
+ * and chat. Older files are upgraded: one from before projects existed
+ * becomes the default project, and locks from before branches existed
+ * move to the unnamed branch.
  */
 function loadStore() {
   if (!fs.existsSync(STATE_FILE)) return { projects: {} };
   const saved = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
-  if (saved.projects) return saved;
-  return { projects: { [DEFAULT_PROJECT]: { ...emptySpace(), ...saved } } };
+  const projects = saved.projects ?? { [DEFAULT_PROJECT]: saved };
+  for (const [name, space] of Object.entries(projects)) {
+    projects[name] = { ...emptySpace(), ...space };
+    for (const [file, lock] of Object.entries(projects[name].locks)) {
+      if ("owner" in lock) projects[name].locks[file] = { "": lock };
+    }
+  }
+  return { projects };
 }
 
 /** Writes every project's state to disk after each change. */

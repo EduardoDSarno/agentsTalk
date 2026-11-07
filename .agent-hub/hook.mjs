@@ -11,6 +11,8 @@ const HUB_URL = (process.env.AGENT_HUB_URL ?? GIT_SETTINGS.url ?? DEFAULT_HUB_UR
 const AGENT = process.env.AGENT_HUB_NAME ?? GIT_SETTINGS.name ?? os.userInfo().username;
 const TOKEN = process.env.AGENT_HUB_TOKEN ?? GIT_SETTINGS.token ?? "";
 const PROJECT = process.env.AGENT_HUB_PROJECT ?? GIT_SETTINGS.project ?? "";
+// Read on every run, so switching branches is picked up right away.
+const BRANCH = currentBranch(process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
 const HUB_TIMEOUT_MS = 3000;
 const BLOCK_EXIT_CODE = 2;
 const LOCK_REASON = "editing with Claude Code";
@@ -58,7 +60,7 @@ async function guardEdit(input) {
   const result = JSON.parse(await hub("POST", "/api/lock", { paths: [relative], reason: LOCK_REASON }));
   const blocked = result.blocked?.[0];
   if (!blocked) return;
-  console.error(`${blocked.path} is locked by ${blocked.owner}${blocked.reason ? ` (${blocked.reason})` : ""}. ` +
+  console.error(`${blocked.path} is locked by ${blocked.owner} on this branch${blocked.reason ? ` (${blocked.reason})` : ""}. ` +
     `Do not edit it. Work on something else, or ask @${blocked.owner} with the agent-hub say tool.`);
   process.exit(BLOCK_EXIT_CODE);
 }
@@ -100,7 +102,7 @@ function changedFiles(root) {
 
 /** Calls the hub API as this agent and returns the response body as text. */
 async function hub(method, route, body) {
-  const url = `${HUB_URL}${route}?project=${encodeURIComponent(PROJECT)}&agent=${encodeURIComponent(AGENT)}&token=${encodeURIComponent(TOKEN)}`;
+  const url = `${HUB_URL}${route}?project=${encodeURIComponent(PROJECT)}&branch=${encodeURIComponent(BRANCH)}&agent=${encodeURIComponent(AGENT)}&token=${encodeURIComponent(TOKEN)}`;
   const response = await fetch(url, {
     method,
     headers: { "content-type": "application/json" },
@@ -116,6 +118,16 @@ async function readStdin() {
   let raw = "";
   for await (const chunk of process.stdin) raw += chunk;
   return raw || "{}";
+}
+
+/** Returns the checked-out Git branch, or "" when detached or outside a Git repo. */
+function currentBranch(cwd) {
+  try {
+    const name = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return name === "HEAD" ? "" : name;
+  } catch {
+    return "";
+  }
 }
 
 /** Reads every `agenthub.<key>` value from this clone's Git config, or nothing outside a Git repo. */

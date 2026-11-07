@@ -39,7 +39,9 @@ async function findBlocked(name, paths) {
   const hubUrl = setting("AGENT_HUB_URL", "url") || DEFAULT_HUB_URL;
   const token = setting("AGENT_HUB_TOKEN", "token");
   const project = setting("AGENT_HUB_PROJECT", "project");
-  const url = `${hubUrl.replace(/\/$/, "")}/api/check?project=${encodeURIComponent(project)}&agent=${encodeURIComponent(name)}&token=${encodeURIComponent(token)}`;
+  // Only locks on the branch being committed to count; other branches meet at merge time.
+  const branch = git("branch", "--show-current").trim();
+  const url = `${hubUrl.replace(/\/$/, "")}/api/check?project=${encodeURIComponent(project)}&branch=${encodeURIComponent(branch)}&agent=${encodeURIComponent(name)}&token=${encodeURIComponent(token)}`;
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
