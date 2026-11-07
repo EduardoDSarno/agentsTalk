@@ -45,6 +45,12 @@ test('presence follows activity, honours set_status, and shows who can be woken'
   assert.equal(state.bob.person.status, 'available');
   assert.equal(state.alice.wakeable, false);
 
+  // The dashboard's lightweight polls (/api/me, /api/projects) also count as the person being present.
+  await call('/api/me', keys.alice);
+  assert.equal((await team()).alice.person.status, 'available');
+  await call('/api/projects', keys.alice);
+  assert.ok((await team()).alice.person.lastSeen > 0);
+
   // Taking a lock makes alice's agent present and visibly working.
   await call('/api/lock?branch=main', keys.alice, { paths: ['src/app.ts'], reason: 'test' });
   state = await team();
