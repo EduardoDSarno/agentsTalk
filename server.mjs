@@ -12,25 +12,33 @@ const TEAM_TOKEN = process.env.AGENT_HUB_TOKEN ?? "";
 const LOCK_TTL_MINUTES = 20;
 const LOCK_TTL_MS = LOCK_TTL_MINUTES * 60_000;
 const MAX_EVENTS = 200;
-const MAX_MESSAGES = 200;
+const MAX_MESSAGES = 500;
+const MAX_MESSAGE_CHARS = 1000;
+const CHAT_READ_DEFAULT = 20;
+const CHAT_READ_MAX = 100;
 const RECENT_EVENTS_IN_STATUS = 10;
+const HEARTBEAT_MS = 25_000;
 const TASK_STATUSES = ["todo", "doing", "done"];
 const EVERYONE = "all";
 const UNKNOWN_AGENT = "unknown";
+const MENTION_PATTERN = /@([a-z0-9_-]+)/gi;
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const STATE_FILE = path.join(DIR, "state.json");
 const DASHBOARD_FILE = path.join(DIR, "dashboard.html");
 
 const state = loadState();
+/** Open wake-up streams per agent name, used by the Claude Code channel. */
+const wakeStreams = new Map();
 
 http.createServer(handleRequest).listen(PORT, () => {
   console.log(`Agent hub running: dashboard at http://localhost:${PORT}/  MCP at http://localhost:${PORT}/mcp?agent=<name>`);
 });
+setInterval(sendHeartbeats, HEARTBEAT_MS);
 
 /**
- * Routes every HTTP request: the dashboard page, the JSON API used by hooks
- * and the dashboard, and the MCP endpoint that any agent can connect to.
- * The agent's name always comes from the `agent` query parameter.
+ * Routes every HTTP request: the dashboard page, the JSON API used by hooks,
+ * channels and the dashboard, and the MCP endpoint any agent can connect to.
+ * The caller's name always comes from the `agent` query parameter.
  */
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -41,6 +49,12 @@ async function handleRequest(req, res) {
     if (url.pathname === "/mcp") return await handleMcp(req, res, agent);
     if (req.method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, snapshot());
     if (req.method === "GET" && url.pathname === "/api/status") return sendText(res, statusText(agent));
+    if (req.method === "GET" && url.pathname === "/api/inbox") return sendText(res, formatMentions(takeMentions(agent)));
+    if (req.method === "GET" && url.pathname === "/api/wake") return openWakeStream(req, res, agent);
+    if (req.method === "POST" && url.pathname === "/api/chat") {
+      const body = await readJson(req);
+      return sendJson(res, 200, publicMessage(postChat(agent, body.text, body.human === true)));
+    }
     if (req.method === "POST" && url.pathname === "/api/lock") {
       const body = await readJson(req);
       return sendJson(res, 200, lockFiles(agent, body.paths ?? [], body.reason));
@@ -73,13 +87,13 @@ async function handleMcp(req, res, agent) {
 
 /**
  * Declares the tools agents use to coordinate: see the team state, lock and
- * unlock files, manage tasks, message teammates and announce what they do.
+ * unlock files, manage tasks, and talk in the group chat.
  */
 function buildMcpServer(agent) {
-  const server = new McpServer({ name: "agent-hub", version: "1.0.0" });
+  const server = new McpServer({ name: "agent-hub", version: "1.1.0" });
 
   server.registerTool("status", {
-    description: "Call this first and before each new piece of work. Shows file locks, tasks, your unread messages and recent team activity.",
+    description: "Call this when you start. Shows file locks, tasks, chat messages that mention you, and recent team activity.",
   }, async () => reply(statusText(agent)));
 
   server.registerTool("lock_files", {
@@ -102,21 +116,71 @@ function buildMcpServer(agent) {
     inputSchema: { id: z.number().int(), status: z.enum(TASK_STATUSES), note: z.string().optional() },
   }, async ({ id, status, note }) => reply(`Task #${updateTask(agent, id, status, note).id} is now ${status}`));
 
-  server.registerTool("send_message", {
-    description: `Send a message to a teammate's agent by name, or to "${EVERYONE}". They see it the next time they check status.`,
-    inputSchema: { to: z.string(), text: z.string() },
-  }, async ({ to, text }) => reply(`Sent to ${sendMessage(agent, to, text).to}`));
-
-  server.registerTool("log", {
-    description: "Tell the team what you are doing right now. Shows on the live dashboard.",
+  server.registerTool("say", {
+    description: `Post one short line in the team group chat, e.g. "working on the login form". Use @name to address a teammate or their agent, @${EVERYONE} for everyone. Don't post just to acknowledge.`,
     inputSchema: { text: z.string() },
-  }, async ({ text }) => {
-    logEvent(agent, text);
-    saveState();
-    return reply("Logged");
-  });
+  }, async ({ text }) => reply(`Posted as #${postChat(agent, text).id}`));
+
+  server.registerTool("read_chat", {
+    description: "Read the latest group chat messages. Only use when you need more context than the messages that mention you.",
+    inputSchema: { limit: z.number().int().min(1).max(CHAT_READ_MAX).optional() },
+  }, async ({ limit }) => reply(formatChat(state.messages.slice(-(limit ?? CHAT_READ_DEFAULT)))));
 
   return server;
+}
+
+/**
+ * Adds a chat message, records who it mentions, and wakes any mentioned
+ * Claude Code sessions. Only humans' messages wake agents, so two agents
+ * can't keep waking each other and burn tokens in a loop.
+ */
+function postChat(from, text, fromHuman = false) {
+  const clean = String(text ?? "").trim().slice(0, MAX_MESSAGE_CHARS);
+  if (!clean) throw new Error("Message is empty");
+  const mentions = [...new Set([...clean.matchAll(MENTION_PATTERN)].map((match) => match[1].toLowerCase()))];
+  const message = { id: state.nextMessageId++, at: Date.now(), from, text: clean, mentions, fromHuman, readBy: [] };
+  state.messages.push(message);
+  state.messages = state.messages.slice(-MAX_MESSAGES);
+  saveState();
+  deliverWakeUps();
+  return message;
+}
+
+/**
+ * Returns the chat messages addressed to this agent (by name or @all) that it
+ * hasn't received yet, and marks them received. Agents only ever get these,
+ * never the whole chat, which keeps their token use low.
+ */
+function takeMentions(agent, humanOnly = false) {
+  const fresh = state.messages.filter((m) =>
+    m.from !== agent
+    && !m.readBy.includes(agent)
+    && (m.mentions.includes(agent) || m.mentions.includes(EVERYONE))
+    && (!humanOnly || m.fromHuman));
+  for (const message of fresh) message.readBy.push(agent);
+  if (fresh.length) saveState();
+  return fresh;
+}
+
+/** Keeps a stream open for a Claude Code channel and sends any waiting mentions. */
+function openWakeStream(req, res, agent) {
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+  res.write(": connected\n\n");
+  if (!wakeStreams.has(agent)) wakeStreams.set(agent, new Set());
+  wakeStreams.get(agent).add(res);
+  req.on("close", () => wakeStreams.get(agent)?.delete(res));
+  deliverWakeUps();
+}
+
+/** Pushes new human mentions to every connected channel whose agent is mentioned. */
+function deliverWakeUps() {
+  for (const [agent, streams] of wakeStreams) {
+    if (!streams.size) continue;
+    const mentions = takeMentions(agent, true);
+    if (!mentions.length) continue;
+    const data = `data: ${JSON.stringify(mentions.map(publicMessage))}\n\n`;
+    for (const res of streams) res.write(data);
+  }
 }
 
 /**
@@ -189,26 +253,15 @@ function updateTask(agent, id, status, note) {
   return task;
 }
 
-/** Stores a message for one teammate or everyone and shows it in the feed. */
-function sendMessage(from, to, text) {
-  const message = { id: Date.now(), at: Date.now(), from, to: cleanName(to), text, readBy: [] };
-  state.messages.push(message);
-  state.messages = state.messages.slice(-MAX_MESSAGES);
-  logEvent(from, `→ ${message.to}: ${text}`);
-  saveState();
-  return message;
-}
-
 /**
- * Builds the plain-text briefing agents read: rules, locks, tasks, unread
- * messages and recent activity. Reading it marks the messages as read.
+ * Builds the plain-text briefing agents read when they start: rules, locks,
+ * tasks, messages that mention them and recent activity.
  */
 function statusText(agent) {
   const { locks, tasks, events } = snapshot();
-  const unread = takeUnread(agent);
   const lines = [
     `TEAM AGENT HUB — you are "${agent}".`,
-    "Rules: call lock_files before editing a file; never edit a file locked by someone else; unlock_files after you push.",
+    "Rules: lock files before editing; never edit a file locked by someone else; unlock after you push. Post one short line with `say` when you start something; @name addresses someone.",
     "",
     "File locks:",
     ...(locks.length ? locks.map((l) => `- ${l.path} — ${l.owner}${l.reason ? ` (${l.reason})` : ""}, ${l.minutesLeft} min left`) : ["- none"]),
@@ -216,8 +269,7 @@ function statusText(agent) {
     "Tasks:",
     ...(tasks.length ? tasks.map((t) => `- #${t.id} [${t.status}] ${t.title}${t.owner ? ` — ${t.owner}` : ""}${t.note ? ` (${t.note})` : ""}`) : ["- none"]),
     "",
-    "Unread messages for you:",
-    ...(unread.length ? unread.map((m) => `- from ${m.from}${m.to === EVERYONE ? " (to all)" : ""}: ${m.text}`) : ["- none"]),
+    formatMentions(takeMentions(agent)) || "No new chat messages for you.",
     "",
     "Recent activity:",
     ...events.slice(0, RECENT_EVENTS_IN_STATUS).map((e) => `- ${e.agent}: ${e.text}`),
@@ -238,24 +290,30 @@ function snapshot() {
     })),
     tasks: state.tasks,
     events: [...state.events].reverse(),
-    messages: [...state.messages].reverse().map(({ readBy, ...message }) => message),
+    messages: state.messages.map(publicMessage),
   };
 }
 
-/** Returns the messages this agent hasn't seen yet and marks them as seen. */
-function takeUnread(agent) {
-  const unread = state.messages.filter((m) =>
-    (m.to === agent || (m.to === EVERYONE && m.from !== agent)) && !m.readBy.includes(agent));
-  for (const message of unread) message.readBy.push(agent);
-  if (unread.length) saveState();
-  return unread;
+/** Formats mentions for an agent, or returns an empty string when there are none. */
+function formatMentions(messages) {
+  return messages.length ? `New chat messages for you:\n${formatChat(messages)}` : "";
+}
+
+/** Formats chat messages as compact lines an agent can read cheaply. */
+function formatChat(messages) {
+  return messages.map((m) => `- #${m.id} ${m.from}${m.fromHuman ? " (human)" : ""}: ${m.text}`).join("\n") || "- no messages";
+}
+
+/** Strips internal read-tracking before a message leaves the server. */
+function publicMessage({ readBy, ...message }) {
+  return message;
 }
 
 /** Turns a lock result into a sentence an agent can act on. */
 function formatLockResult({ granted, blocked }) {
   const parts = [];
   if (granted.length) parts.push(`Locked for you: ${granted.join(", ")}`);
-  for (const b of blocked) parts.push(`BLOCKED: ${b.path} is locked by ${b.owner}${b.reason ? ` (${b.reason})` : ""}. Do not edit it; work on something else or send_message to ${b.owner}.`);
+  for (const b of blocked) parts.push(`BLOCKED: ${b.path} is locked by ${b.owner}${b.reason ? ` (${b.reason})` : ""}. Do not edit it; work on something else or ask @${b.owner} with say.`);
   return parts.join("\n");
 }
 
@@ -281,6 +339,11 @@ function pruneExpiredLocks() {
       logEvent(lock.owner, `lock on ${file} expired`);
     }
   }
+}
+
+/** Keeps idle wake-up streams from being closed by proxies or the OS. */
+function sendHeartbeats() {
+  for (const streams of wakeStreams.values()) for (const res of streams) res.write(": ping\n\n");
 }
 
 /** Makes paths from different machines and agents comparable. */
@@ -328,9 +391,9 @@ function sendFile(res, file) {
   res.end(fs.readFileSync(file));
 }
 
-/** Loads saved state so a server restart keeps tasks and locks. */
+/** Loads saved state so a server restart keeps tasks, locks and chat. */
 function loadState() {
-  const empty = { locks: {}, tasks: [], events: [], messages: [], nextTaskId: 1 };
+  const empty = { locks: {}, tasks: [], events: [], messages: [], nextTaskId: 1, nextMessageId: 1 };
   if (!fs.existsSync(STATE_FILE)) return empty;
   return { ...empty, ...JSON.parse(fs.readFileSync(STATE_FILE, "utf8")) };
 }

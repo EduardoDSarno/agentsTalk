@@ -15,20 +15,28 @@ await main();
 
 /**
  * Runs on Claude Code hook events. Before an edit it locks the file on the
- * hub and blocks the edit if a teammate holds it; at session start and on
- * each prompt it gives Claude the team status, including new messages.
+ * hub and blocks the edit if a teammate holds it. At session start Claude
+ * gets the full team status once; after that, on each prompt and tool call,
+ * it only gets new chat messages that mention it, and nothing at all when
+ * there are none, so the hub costs no tokens while it's quiet.
  * If the hub is unreachable it lets work continue instead of blocking it.
  */
 async function main() {
   const input = JSON.parse(await readStdin());
+  const event = input.hook_event_name;
   try {
-    if (input.hook_event_name === "PreToolUse") return await guardEdit(input);
-    if (input.hook_event_name === "SessionStart" || input.hook_event_name === "UserPromptSubmit") {
-      process.stdout.write(await hub("GET", "/api/status"));
-    }
+    if (event === "PreToolUse") return await guardEdit(input);
+    if (event === "SessionStart") return addContext(event, await hub("GET", "/api/status"));
+    if (event === "UserPromptSubmit" || event === "PostToolUse") return addContext(event, await hub("GET", "/api/inbox"));
   } catch (error) {
     console.error(`agent-hub unreachable (${error.message}); continuing without locks`);
   }
+}
+
+/** Hands text to Claude as extra context for this event; does nothing for empty text. */
+function addContext(hookEventName, text) {
+  if (!text.trim()) return;
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: text } }));
 }
 
 /** Locks the file Claude is about to edit, or blocks the edit if someone else holds it. */
@@ -42,7 +50,7 @@ async function guardEdit(input) {
   const blocked = result.blocked?.[0];
   if (!blocked) return;
   console.error(`${blocked.path} is locked by ${blocked.owner}${blocked.reason ? ` (${blocked.reason})` : ""}. ` +
-    `Do not edit it. Work on something else, or message ${blocked.owner} through the agent-hub send_message tool.`);
+    `Do not edit it. Work on something else, or ask @${blocked.owner} with the agent-hub say tool.`);
   process.exit(BLOCK_EXIT_CODE);
 }
 

@@ -5,21 +5,34 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Hub</title>
 <style>
-  :root { --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #6b7280; --line: #e5e7eb; --lock: #b45309; --ok: #047857; }
+  :root { --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #6b7280; --line: #e5e7eb; --lock: #b45309; --ok: #047857; --accent: #2563eb; --human: #eef2ff; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #111418; --card: #1a1f26; --text: #e6e8eb; --muted: #9aa3ae; --line: #2a313b; --lock: #f59e0b; --ok: #34d399; }
+    :root { --bg: #111418; --card: #1a1f26; --text: #e6e8eb; --muted: #9aa3ae; --line: #2a313b; --lock: #f59e0b; --ok: #34d399; --accent: #60a5fa; --human: #1e2640; }
   }
+  * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; }
-  header { padding: 16px; display: flex; justify-content: space-between; align-items: baseline; }
+  header { padding: 16px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
   h1 { margin: 0; font-size: 20px; }
   h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
-  main { display: grid; gap: 12px; padding: 0 16px 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  main { display: grid; gap: 12px; padding: 0 16px 16px; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+  @media (max-width: 800px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .side { display: grid; gap: 12px; align-content: start; }
   section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
   ul { list-style: none; margin: 0; padding: 0; }
   li { padding: 6px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
   li:first-child { border-top: 0; }
+  .chat { display: flex; flex-direction: column; height: calc(100vh - 80px); min-height: 400px; }
+  #messages { flex: 1; overflow-y: auto; }
+  #messages li { padding: 6px 8px; border-radius: 6px; border: 0; }
+  #messages li.human { background: var(--human); }
+  form { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  input { font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); }
+  #name { width: 120px; }
+  #text { flex: 1; min-width: 160px; }
+  button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
   .who { font-weight: 600; }
   .muted { color: var(--muted); }
+  .mention { color: var(--accent); font-weight: 600; }
   .lock { color: var(--lock); }
   .done { color: var(--ok); }
   #error { color: #dc2626; }
@@ -28,15 +41,30 @@
 <body>
 <header><h1>Agent Hub</h1><span id="error" class="muted"></span></header>
 <main>
-  <section><h2>File locks</h2><ul id="locks"></ul></section>
-  <section><h2>Tasks</h2><ul id="tasks"></ul></section>
-  <section><h2>Live activity</h2><ul id="events"></ul></section>
-  <section><h2>Messages</h2><ul id="messages"></ul></section>
+  <section class="chat">
+    <h2>Team chat</h2>
+    <ul id="messages"></ul>
+    <form id="chat-form">
+      <input id="name" placeholder="your name" required>
+      <input id="text" placeholder="Message… use @name to wake an agent, @all for everyone" maxlength="1000" required>
+      <button>Send</button>
+    </form>
+  </section>
+  <div class="side">
+    <section><h2>File locks</h2><ul id="locks"></ul></section>
+    <section><h2>Tasks</h2><ul id="tasks"></ul></section>
+    <section><h2>Activity</h2><ul id="events"></ul></section>
+  </div>
 </main>
 <script>
   const REFRESH_MS = 2000;
+  const NAME_KEY = "agent-hub-name";
   const token = new URLSearchParams(location.search).get("token") ?? "";
+  const nameInput = document.getElementById("name");
+  let lastMessageId = 0;
 
+  nameInput.value = readSavedName();
+  document.getElementById("chat-form").addEventListener("submit", sendChat);
   refresh();
   setInterval(refresh, REFRESH_MS);
 
@@ -46,21 +74,49 @@
       const response = await fetch(`/api/state?token=${encodeURIComponent(token)}`);
       if (!response.ok) throw new Error((await response.json()).error);
       const { locks, tasks, events, messages } = await response.json();
+      renderChat(messages);
       render("locks", locks, (l) => `<span class="lock">🔒 ${esc(l.path)}</span> — <span class="who">${esc(l.owner)}</span> ${esc(l.reason)} <span class="muted">${l.minutesLeft} min left</span>`);
       render("tasks", tasks, (t) => `<span class="${t.status === "done" ? "done" : ""}">#${t.id} [${esc(t.status)}]</span> ${esc(t.title)} <span class="who">${esc(t.owner)}</span> <span class="muted">${esc(t.note)}</span>`);
       render("events", events, (e) => `<span class="muted">${time(e.at)}</span> <span class="who">${esc(e.agent)}</span> ${esc(e.text)}`);
-      render("messages", messages, (m) => `<span class="muted">${time(m.at)}</span> <span class="who">${esc(m.from)} → ${esc(m.to)}</span> ${esc(m.text)}`);
       document.getElementById("error").textContent = "";
     } catch (error) {
       document.getElementById("error").textContent = `Can't reach hub: ${error.message}`;
     }
   }
 
+  /** Posts the typed message to the chat as a human, so it can wake mentioned agents. */
+  async function sendChat(event) {
+    event.preventDefault();
+    const textInput = document.getElementById("text");
+    const name = nameInput.value.trim();
+    saveName(name);
+    const url = `/api/chat?agent=${encodeURIComponent(name)}&token=${encodeURIComponent(token)}`;
+    await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: textInput.value, human: true }) });
+    textInput.value = "";
+    refresh();
+  }
+
+  /** Redraws the chat only when there are new messages, keeping the view pinned to the newest one. */
+  function renderChat(messages) {
+    const newest = messages.at(-1)?.id ?? 0;
+    if (newest === lastMessageId) return;
+    lastMessageId = newest;
+    render("messages", messages, (m) => `<span class="muted">${time(m.at)}</span> <span class="who">${esc(m.from)}</span>${m.fromHuman ? "" : ' <span class="muted">(agent)</span>'} ${highlightMentions(esc(m.text))}`,
+      (m) => (m.fromHuman ? "human" : ""));
+    const list = document.getElementById("messages");
+    list.scrollTop = list.scrollHeight;
+  }
+
   /** Fills one panel's list, or shows a placeholder when it's empty. */
-  function render(id, items, line) {
+  function render(id, items, line, rowClass = () => "") {
     document.getElementById(id).innerHTML = items.length
-      ? items.map((item) => `<li>${line(item)}</li>`).join("")
+      ? items.map((item) => `<li class="${rowClass(item)}">${line(item)}</li>`).join("")
       : `<li class="muted">Nothing yet</li>`;
+  }
+
+  /** Colors @mentions so it's easy to see who a message is for. */
+  function highlightMentions(html) {
+    return html.replace(/@([a-z0-9_-]+)/gi, '<span class="mention">@$1</span>');
   }
 
   /** Escapes text so agent-written content can't inject HTML. */
@@ -71,6 +127,16 @@
   /** Shows a timestamp as local hours and minutes. */
   function time(at) {
     return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  /** Reads the name this browser used last time; storage can be blocked, so failures are ignored. */
+  function readSavedName() {
+    try { return localStorage.getItem(NAME_KEY) ?? ""; } catch { return ""; }
+  }
+
+  /** Remembers the name for next time; storage can be blocked, so failures are ignored. */
+  function saveName(name) {
+    try { localStorage.setItem(NAME_KEY, name); } catch {}
   }
 </script>
 </body>
