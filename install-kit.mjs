@@ -62,7 +62,7 @@ async function main() {
   await installKit(repo, values.hub);
 }
 
-export async function installKit(repo, hubUrl) {
+export async function installKit(repo, hubUrl, { showNextSteps = true } = {}) {
   const githubRepo = githubRepoOf(repo);
   const kit = path.join(repo, KIT_FOLDER);
   fs.mkdirSync(kit, { recursive: true });
@@ -82,8 +82,10 @@ export async function installKit(repo, hubUrl) {
   addRules(path.join(repo, "AGENTS.md"));
 
   console.log(`Kit installed in ${path.resolve(repo)} for ${githubRepo ?? "a repo without a GitHub remote yet"}.`);
-  console.log("Next: commit and push it. The kit has no secrets, so the repo can be public.");
-  console.log(`Teammates with write access then clone the repo and run: node ${KIT_FOLDER}`);
+  if (showNextSteps) {
+    console.log("Next: commit and push it. The kit has no secrets, so the repo can be public.");
+    console.log(`Teammates with write access then clone the repo and run: node ${KIT_FOLDER}`);
+  }
 }
 
 /** Reads "owner/name" from the repo's GitHub remote; the hub names the project after it. */

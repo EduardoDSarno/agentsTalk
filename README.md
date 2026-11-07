@@ -42,11 +42,18 @@ Inside the GitHub repository you want to share:
 npx agentstalk init
 ```
 
-Sign in with GitHub when prompted. The CLI detects the repository from its
-`origin` remote, installs the public kit and coordination rules, and joins your
-repository's project on the hub. Commit and push the generated `agentstalk/`,
-`AGENTS.md`, `.claude/settings.json`, and `.codex/config.toml` files that apply.
-Existing instructions and agent settings are preserved.
+The CLI first warns that it will install the team setup, connect your coding
+agents, create a commit, and push your current branch to `origin`. Earlier
+unpushed commits on that branch will also be uploaded. Type `y` to continue,
+then approve GitHub sign-in. Declining leaves the repository untouched.
+
+The CLI detects the repository from `origin`, installs the public kit and
+coordination rules, joins its project on the hub, and commits and pushes the
+setup files automatically. Existing instructions and agent settings are
+preserved. Unrelated staged changes stay out of the setup commit. Save or stash
+existing changes to setup files before starting. Git hooks and normal push
+checks still apply; a failed push leaves the setup commit available locally.
+Use `--yes` to accept the warning explicitly in unattended scripts.
 
 ### Friends
 
@@ -116,8 +123,8 @@ npm pack
 `npm pack` builds dependency-free channel and Codex connection bundles into the
 package. End users don't need esbuild. Before the package is published to npm,
 use `node /path/to/agentsTalk/cli.mjs init` from a target repository, or install a
-locally packed tarball. The `npx agentstalk` commands above require publication
-of this package; they do not refer to a verified existing npm release.
+locally packed tarball. The automatic commit-and-push flow requires npm package
+version 1.0.1 or later.
 
 The lower-level installer remains available:
 

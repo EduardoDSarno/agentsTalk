@@ -10,8 +10,9 @@ import { githubRepoFromRemote } from '../kit/github-repo.mjs';
 const source = fileURLToPath(new URL('../', import.meta.url));
 const cli = process.env.TEST_CLI_ENTRY ?? path.join(source, 'cli.mjs');
 const git = (root, ...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-async function run(root, args, env = {}) {
-  const child = spawn(process.execPath, [cli, ...args], { cwd: root, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+async function run(root, args, env = {}, input = '') {
+  const child = spawn(process.execPath, [cli, ...args], { cwd: root, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stdin.end(input);
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => output += chunk);
   const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
   return { code, output };
@@ -40,6 +41,7 @@ test('CLI initializes and joins clones, preserves settings, and reuses GitHub lo
   const hub = http.createServer(async (req, res) => {
     res.setHeader('content-type','application/json');
     if(req.url === '/api/config') return res.end(JSON.stringify({githubClientId:'test-client'}));
+    if(req.url.startsWith('/api/check')) return res.end(JSON.stringify({blocked:[]}));
     if(req.url === '/api/auth/github') {
       let raw='';for await (const chunk of req) raw += chunk;
       const body=JSON.parse(raw);calls.push(body);
@@ -57,10 +59,33 @@ test('CLI initializes and joins clones, preserves settings, and reuses GitHub lo
     return root;
   }
   const owner=await repo('owner');
+  git(owner,'config','user.name','Setup Test');git(owner,'config','user.email','setup@example.invalid');git(owner,'config','commit.gpgsign','false');
   await fs.writeFile(path.join(owner,'AGENTS.md'),'Keep existing instructions.\n');
   await fs.mkdir(path.join(owner,'.codex'));await fs.writeFile(path.join(owner,'.codex/config.toml'),'model = "existing-model"\n');
-  let result=await run(owner,['init','--hub',url,'--agent','codex'],env);
+  git(owner,'add','.');git(owner,'commit','-qm','Existing project');
+  const initial=git(owner,'rev-parse','HEAD');
+  const remote=path.join(temp,'remote.git');git(temp,'init','--bare','-q',remote);git(owner,'config','remote.origin.pushurl',remote);
+  let result=await run(owner,['init','--hub',url,'--agent','codex'],env,'n\n');
+  assert.equal(result.code,0,result.output);assert.match(result.output,/Warning:/);assert.match(result.output,/Cancelled/);
+  assert.equal(git(owner,'rev-parse','HEAD'),initial);assert.equal(calls.length,0);
+  await assert.rejects(fs.access(path.join(owner,'agentstalk')));
+  await fs.appendFile(path.join(owner,'AGENTS.md'),'Uncommitted instructions\n');
+  result=await run(owner,['init','--yes','--hub',url,'--agent','codex'],env);
+  assert.equal(result.code,1);assert.match(result.output,/existing changes/);assert.equal(calls.length,0);
+  git(owner,'restore','AGENTS.md');
+  await fs.writeFile(path.join(owner,'unrelated.txt'),'Staged user work\n');git(owner,'add','unrelated.txt');
+  await fs.writeFile(path.join(owner,'untracked.txt'),'Untracked user work\n');
+  result=await run(owner,['init','--hub',url,'--agent','codex'],env,'yes\n');
   assert.equal(result.code,0,result.output.replace(/test-personal-key/g,'[redacted]'));
+  assert.match(result.output,/Committed agentsTalk/);assert.match(result.output,/Pushed/);
+  const initialized=git(owner,'rev-parse','HEAD'),branch=git(owner,'branch','--show-current');
+  assert.equal(git(remote,'rev-parse',`refs/heads/${branch}`),initialized);
+  assert.equal(git(owner,'diff','--cached','--name-only'),'unrelated.txt');
+  const committed=git(owner,'show','--pretty=','--name-only','HEAD');
+  assert.ok(!committed.includes('unrelated.txt'));assert.ok(!committed.includes('untracked.txt'));
+  assert.ok(!git(owner,'show','HEAD:agentstalk/config.json').includes('test-personal-key'));
+  result=await run(owner,['init','--yes','--hub',url,'--agent','codex'],env);
+  assert.equal(result.code,0,result.output);assert.match(result.output,/already committed/);assert.equal(git(owner,'rev-parse','HEAD'),initialized);
   assert.equal(git(owner,'config','--get','agenthub.project'),'team/hackathon');
   assert.equal(git(owner,'config','--get','agenthub.key'),'test-personal-key');
   const config=await fs.readFile(path.join(owner,'.codex/config.toml'),'utf8');
@@ -71,7 +96,7 @@ test('CLI initializes and joins clones, preserves settings, and reuses GitHub lo
   result=await run(owner,['--agent','codex'],env);assert.equal(result.code,0);assert.equal(await fs.readFile(path.join(owner,'.codex/config.toml'),'utf8'),config);
   assert.equal((await fs.readFile(path.join(owner,'AGENTS.md'),'utf8')).split('## Team coordination').length,2);
   const friend=await repo('friend');result=await run(friend,['join','--hub',url,'--agent','none'],env);assert.equal(result.code,0);assert.ok(!result.output.includes('enter the code'));
-  assert.deepEqual(calls.map(c=>c.repo),['team/hackathon','team/hackathon','team/hackathon']);
+  assert.deepEqual(calls.map(c=>c.repo),['team/hackathon','team/hackathon','team/hackathon','team/hackathon']);
   assert.equal((await fs.readFile(path.join(owner,'agentstalk/config.json'),'utf8')).includes('test-personal-key'),false);
   const denied=await repo('denied');git(denied,'remote','set-url','origin','https://github.com/team/read-only');
   result=await run(denied,['join','--hub',url,'--agent','none'],env);assert.equal(result.code,1);assert.match(result.output,/write access/);
