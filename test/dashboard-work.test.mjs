@@ -27,6 +27,15 @@ test('tasks show readable titles, owner identity and escaped user text', () => {
   assert.equal(elements.get('task-count').textContent, 2);
 });
 
+test('a task with a pull request links to it on GitHub', () => {
+  const { ui, elements, context } = dashboard();
+  vm.runInContext('project = "team/app"', context);
+  ui.renderTasks([{ id: 1, status: 'doing', title: 'Linked', owner: 'alice', pr: 17 }, { id: 2, status: 'todo', title: 'Plain', owner: '' }]);
+  const html = elements.get('tasks').innerHTML;
+  assert.match(html, /href="https:\/\/github\.com\/team\/app\/pull\/17"[^>]*>PR #17</);
+  assert.equal((html.match(/pull\//g) || []).length, 1);
+});
+
 test('only the opened task shows its note field and actions; done tasks stay out of the count', () => {
   const { ui, elements } = dashboard();
   const tasks = [{ id: 1, status: 'todo', title: 'First', owner: '' }, { id: 2, status: 'todo', title: 'Second', owner: '' }, { id: 3, status: 'done', title: 'Old', owner: 'alice' }];
