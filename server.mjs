@@ -59,6 +59,10 @@ async function handleRequest(req, res) {
       const body = await readJson(req);
       return sendJson(res, 200, lockFiles(agent, body.paths ?? [], body.reason));
     }
+    if (req.method === "POST" && url.pathname === "/api/check") {
+      const body = await readJson(req);
+      return sendJson(res, 200, { blocked: findBlocked(agent, body.paths ?? []) });
+    }
     if (req.method === "POST" && url.pathname === "/api/unlock") {
       const body = await readJson(req);
       return sendJson(res, 200, unlockFiles(agent, body.paths));
@@ -205,6 +209,17 @@ function lockFiles(agent, paths, reason = "") {
   }
   saveState();
   return { granted, blocked };
+}
+
+/**
+ * Lists which of these files someone else has locked, without locking
+ * anything. The Git pre-commit check uses it to refuse such commits.
+ */
+function findBlocked(agent, paths) {
+  pruneExpiredLocks();
+  return paths.map(normalizePath)
+    .filter((file) => state.locks[file] && state.locks[file].owner !== agent)
+    .map((file) => ({ path: file, owner: state.locks[file].owner, reason: state.locks[file].reason }));
 }
 
 /**

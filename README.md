@@ -85,6 +85,7 @@ Claude Code shows a warning about development channels the first time. Choose **
 
 What each part does:
 - **Before every file edit**, the hook locks the file. If a teammate holds the lock, the edit is blocked and Claude is told who has the file.
+- **After every shell command**, the hook asks Git which files changed (this catches `sed`, `>`, scripts and so on), and locks them. If one is locked by a teammate, Claude is told to undo what its command did to that file. Nothing is reverted automatically.
 - **At session start**, Claude gets the full team status once. **After that**, it only gets new mentions, and nothing when there are none.
 - **When a human @mentions** `ana-ai` and the channel is running, the session wakes up, does the work, and answers in the chat with its `reply` tool.
 - If the hub is down, the hook lets work continue instead of blocking everyone.
@@ -120,7 +121,23 @@ curl -X POST "HUB/api/chat?agent=ana-ai&token=pick-a-secret" -d '{"text":"workin
 curl -X POST "HUB/api/lock?agent=ana-ai&token=pick-a-secret" -d '{"paths":["src/api.ts"],"reason":"adding search"}'
 ```
 
-## 4. Tell non-Claude agents the rules
+## 4. Commit check (covers every agent and human)
+
+A Git pre-commit hook refuses commits that include files a teammate has locked. It runs for every commit in that clone, whether Claude, Cursor, Codex or a human makes it.
+
+Commit `pre-commit.mjs` into the hackathon repo at `.agent-hub/pre-commit.mjs`. Then each person runs this once in their clone:
+
+```bash
+printf '#!/bin/sh\nexec node .agent-hub/pre-commit.mjs\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+```
+
+```bash
+git config agenthub.name ana-ai && git config agenthub.url HUB && git config agenthub.token pick-a-secret
+```
+
+Use **one agent name per laptop** (e.g. `ana-ai`) for every tool on it, Claude, Cursor or anything else. The commit check treats files locked under that name as yours.
+
+## 5. Tell non-Claude agents the rules
 
 Only Claude Code gets the automatic lock check and wake-up. Other agents follow the rules only if you tell them, so paste this into your repo's `AGENTS.md`, which Cursor, Codex and others read:
 
@@ -132,6 +149,7 @@ Only Claude Code gets the automatic lock check and wake-up. Other agents follow 
 - Post one short line with `say` when you start or finish something. Use @name to address someone.
 - Use `update_task` to set your task to `doing` when you start and `done` when it's merged.
 - After you commit and push, call `unlock_files`.
+- Never use `git commit --no-verify`: it skips the team's lock check.
 ```
 
 ## Tools agents get
@@ -151,5 +169,6 @@ Only Claude Code gets the automatic lock check and wake-up. Other agents follow 
 - Locks expire after a while without edits (`LOCK_TTL_MINUTES` in `server.mjs`), so a crashed session can't block a file forever. Every edit renews the lock.
 - Push before you unlock, and pull before editing a file someone just unlocked.
 - Locks are per file. Two agents can still break each other through different files, e.g. by renaming a function. Merge small and often.
-- Claude's own Edit and Write actions are guarded. Changes made through shell commands such as `sed` are not.
+- Claude Code's edits are stopped before they happen. Its shell edits are caught right after, and Claude is told to undo them. Other tools are caught at commit time.
+- The commit check can be skipped with `git commit --no-verify`, so the rules tell agents never to use it.
 - State, including the chat, is saved to `state.json`, so restarting the server keeps everything.
