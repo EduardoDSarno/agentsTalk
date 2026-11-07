@@ -18,6 +18,11 @@ const BLOCK_EXIT_CODE = 2;
 const LOCK_REASON = "editing with Claude Code";
 const SHELL_LOCK_REASON = "changed by a shell command";
 const RENAME_OR_COPY = /[RC]/;
+// Set up means the setup script saved a name for this clone (or one is given in the environment).
+const JOINED = Boolean(process.env.AGENT_HUB_NAME ?? GIT_SETTINGS.name);
+const NOT_JOINED_NOTICE = "agentsTalk (the team's shared chat, file locks and tasks) isn't set up in this clone yet. " +
+  "At a good moment, tell the user once: run `node agentstalk` in a terminal in this repo; it signs them in with GitHub. " +
+  "Afterwards they start Claude with the `agentstalk` command so teammates can reach this session.";
 
 await main();
 
@@ -34,6 +39,11 @@ await main();
 async function main() {
   const input = JSON.parse(await readStdin());
   const event = input.hook_event_name;
+  if (!JOINED) {
+    // Not set up yet: stay out of the hub rather than act under a guessed name, and point to the setup.
+    if (event === "SessionStart") addContext(event, NOT_JOINED_NOTICE);
+    return;
+  }
   try {
     if (event === "PreToolUse") return await guardEdit(input);
     if (event === "PostToolUse" && input.tool_name === "Bash") await checkShellChanges(input);

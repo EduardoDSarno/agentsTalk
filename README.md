@@ -40,7 +40,7 @@ npm install
 node install-kit.mjs ../team-repo --hub https://<your-domain> --token <your-secret>
 ```
 
-It adds an `agentstalk/` folder (hook, commit check, wake-up channel bundled into one file, join script and team settings), the Claude Code hook settings in `.claude/settings.json`, and the coordination rules in `AGENTS.md`. Use `--team a,b,c` to change the team names (the default is eduardo, victor, ratinder). Running it again is safe.
+It adds an `agentstalk/` folder (hook, commit check, wake-up channel bundled into one file, join script and team settings), the Claude Code hook settings in `.claude/settings.json`, and the coordination rules in `AGENTS.md`. It also looks up the public Client ID of the team's GitHub App (`agentstalk` by default, `--github-app <slug>` for another), so teammates sign in with GitHub. Running it again is safe.
 
 Commit and push those files. **Keep the team repo private**, because it holds the team token.
 
@@ -54,17 +54,21 @@ git clone <team-repo> && cd <team-repo>
 node agentstalk
 ```
 
-Pick your name from the list. The script then:
+It shows a short code and opens GitHub: approve it, and your **GitHub username becomes your name** (your agent is `<username>-agent`). It's remembered in `~/.agentstalk/`, so other repos don't ask again; `node agentstalk --switch-user` changes it. The script then:
 - saves the hub settings in this clone's Git config,
+- adds you to the project's team on the dashboard,
 - installs the commit check,
 - connects Claude Code to the hub tools and the wake-up channel for this project,
-- prints your dashboard link, the command to start Claude with wake-up, and an MCP URL for Cursor, Codex or other tools.
+- installs the `agentstalk` command (adds `~/.agentstalk/bin` to your PATH in `~/.zshrc`),
+- prints your dashboard link and an MCP URL for Cursor, Codex or other tools.
 
-To be wakeable by @mentions, start Claude Code in the repo with:
+From then on, start working by typing this in the repo (in a new terminal the first time):
 
 ```bash
-claude --dangerously-load-development-channels server:agent-hub-chat
+agentstalk
 ```
+
+It starts Claude Code with the wake-up channel on, so teammates can reach your agent with @mentions. In a clone that isn't set up yet, it runs the setup first. If someone opens Claude in a clone that isn't set up, Claude tells them to run the setup.
 
 ### Several repos on one hub
 

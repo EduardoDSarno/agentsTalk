@@ -67,6 +67,10 @@ async function handleRequest(req, res) {
       const body = await readJson(req);
       return sendJson(res, 200, publicMessage(postChat(project, agent, body.text, body.human === true)));
     }
+    if (req.method === "POST" && url.pathname === "/api/join") {
+      const body = await readJson(req);
+      return sendJson(res, 200, joinProject(space, cleanName(body.human), agent));
+    }
     if (req.method === "POST" && url.pathname === "/api/lock") {
       const body = await readJson(req);
       return sendJson(res, 200, lockFiles(space, agent, branch, body.paths ?? [], body.reason));
@@ -294,6 +298,19 @@ function takeNotices(space, agent) {
   return notices;
 }
 
+/**
+ * Records a person and their agent as members of the project. The setup
+ * script calls it with the person's GitHub name, and the dashboard builds
+ * its team list and @mention suggestions from these members.
+ */
+function joinProject(space, human, agent) {
+  const isNew = !space.members[human];
+  space.members[human] = { agent, joinedAt: space.members[human]?.joinedAt ?? Date.now() };
+  if (isNew) logEvent(space, human, `joined the project with ${agent}`);
+  saveStore();
+  return { human, agent };
+}
+
 /** Adds a new task to the project's board in the first status column. */
 function addTask(space, agent, title) {
   const task = { id: space.nextTaskId++, title, status: TASK_STATUSES[0], owner: "", note: "" };
@@ -352,6 +369,7 @@ function snapshot(space) {
       minutesLeft: Math.ceil((lock.expiresAt - now) / 60_000),
     }))),
     tasks: space.tasks,
+    members: Object.entries(space.members).map(([name, member]) => ({ name, agent: member.agent })),
     events: [...space.events].reverse(),
     messages: space.messages.map(publicMessage),
   };
@@ -377,7 +395,7 @@ function spaceFor(project) {
 
 /** A new project's starting state. */
 function emptySpace() {
-  return { locks: {}, tasks: [], events: [], messages: [], notices: {}, nextTaskId: 1, nextMessageId: 1 };
+  return { locks: {}, tasks: [], events: [], messages: [], notices: {}, members: {}, nextTaskId: 1, nextMessageId: 1 };
 }
 
 /**

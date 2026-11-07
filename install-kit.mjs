@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Copies the agent-hub kit into a team repo. Run once, by whoever sets up the team:
-//   node install-kit.mjs <path-to-team-repo> --hub <hub-url> --token <team-token> [--team eduardo,victor,ratinder]
+//   node install-kit.mjs <path-to-team-repo> --hub <hub-url> --token <team-token> [--project name] [--github-app slug]
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,9 @@ const KIT_FOLDER = "agentstalk";
 // Where earlier versions put the kit; the installer moves it.
 const OLD_KIT_FOLDERS = [".agent-hub", "agenttalk"];
 const AGENT_SUFFIX = "-agent";
-const DEFAULT_TEAM = "eduardo,victor,ratinder";
+// The team's GitHub App; teammates sign in through it so their name comes from GitHub.
+const DEFAULT_GITHUB_APP = "agentstalk";
+const GITHUB_APP_API = "https://api.github.com/apps/";
 const HOOK_COMMAND = `node "$CLAUDE_PROJECT_DIR/${KIT_FOLDER}/hook.mjs"`;
 const HOOK_EVENTS = {
   SessionStart: undefined,
@@ -48,13 +50,13 @@ async function main() {
     options: {
       hub: { type: "string" },
       token: { type: "string" },
-      team: { type: "string", default: DEFAULT_TEAM },
+      "github-app": { type: "string", default: DEFAULT_GITHUB_APP },
       project: { type: "string" },
     },
   });
   const repo = positionals[0];
   if (!repo || !values.hub || !values.token) {
-    console.error("Usage: node install-kit.mjs <path-to-team-repo> --hub <hub-url> --token <team-token> [--team a,b,c] [--project name]");
+    console.error("Usage: node install-kit.mjs <path-to-team-repo> --hub <hub-url> --token <team-token> [--project name] [--github-app slug]");
     process.exit(1);
   }
   const project = (values.project ?? projectNameOf(repo)).toLowerCase();
@@ -66,8 +68,8 @@ async function main() {
 
   for (const file of ["hook.mjs", "pre-commit.mjs", "kit/join.mjs"]) fs.copyFileSync(path.join(DIR, file), path.join(kit, path.basename(file)));
   await bundleChannel(path.join(kit, "channel.mjs"));
-  const team = values.team.split(",").map((name) => name.trim().toLowerCase()).filter(Boolean);
-  writeJson(path.join(kit, "config.json"), { hubUrl: values.hub, token: values.token, project, team, agentSuffix: AGENT_SUFFIX });
+  const githubClientId = await githubClientIdOf(values["github-app"]);
+  writeJson(path.join(kit, "config.json"), { hubUrl: values.hub, token: values.token, project, githubClientId, agentSuffix: AGENT_SUFFIX });
   addHookSettings(path.join(repo, ".claude", "settings.json"));
   addRules(path.join(repo, "AGENTS.md"));
 
@@ -88,6 +90,16 @@ function projectNameOf(repo) {
   } catch {
     return path.basename(path.resolve(repo));
   }
+}
+
+/**
+ * Looks up the GitHub App's public Client ID, which the setup script needs to
+ * sign teammates in. The Client ID isn't secret, so it can live in the repo.
+ */
+async function githubClientIdOf(slug) {
+  const response = await fetch(`${GITHUB_APP_API}${encodeURIComponent(slug)}`, { headers: { accept: "application/vnd.github+json" } });
+  if (!response.ok) throw new Error(`GitHub App "${slug}" not found (is it public?)`);
+  return (await response.json()).client_id;
 }
 
 /** Bundles the channel and its MCP dependency into one file, so teammates never run npm install. */

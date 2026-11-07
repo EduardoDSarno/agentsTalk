@@ -186,7 +186,6 @@
 </div>
 <script>
   const REFRESH_MS = 2000;
-  const TEAM_MEMBERS = ["eduardo", "victor", "ratinder"];
   const AGENT_SUFFIX = "-agent";
   const EVERYONE = "all";
   const MAX_MESSAGE_CHARS = 1000; // keep equal to MAX_MESSAGE_CHARS in server.mjs
@@ -197,7 +196,9 @@
   const NAME_KEY = "agent-hub-name";
   const THEME_KEY = "agent-hub-theme";
   const TASK_GROUPS = [["doing", "In progress"], ["todo", "Todo"], ["done", "Done"]];
-  const MENTIONABLE = [...TEAM_MEMBERS, ...TEAM_MEMBERS.map((n) => n + AGENT_SUFFIX), EVERYONE];
+  // The project's people (from their GitHub names) and everyone @mentionable; filled from the hub.
+  let teamMembers = [];
+  let mentionable = [EVERYONE];
   const DEFAULT_PROJECT = "default"; // keep equal to DEFAULT_PROJECT in server.mjs
   const token = new URLSearchParams(location.search).get("token") ?? "";
   const $ = (id) => document.getElementById(id);
@@ -219,7 +220,6 @@
     applyTheme(readStored(THEME_KEY) || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
     setUpPicker();
     setUpComposer();
-    $("team-size").textContent = `${TEAM_MEMBERS.length} people · ${TEAM_MEMBERS.length} agents`;
     $("theme-btn").addEventListener("click", () => applyTheme($("hub").classList.contains("light") ? "dark" : "light"));
     $("project").addEventListener("change", (event) => switchProject(event.target.value));
     $("branch").addEventListener("change", (event) => {
@@ -235,8 +235,9 @@
     try {
       const [response, projectsResponse] = await Promise.all([fetch(`/api/state?${hubQuery()}`), fetch(`/api/projects?${hubQuery()}`)]);
       if (!response.ok) throw new Error((await response.json()).error);
-      const { locks, tasks, events, messages } = await response.json();
+      const { locks, tasks, events, messages, members } = await response.json();
       if (projectsResponse.ok) renderProjects(await projectsResponse.json());
+      setTeam(members ?? []);
       setOffline(false);
       lastMessages = messages;
       lastLocks = locks;
@@ -336,6 +337,22 @@
   }
 
   /**
+   * Takes the project's members (people who ran the setup, named after their
+   * GitHub accounts) and rebuilds the team size, the "Who are you?" list and
+   * the @mention suggestions. Opens the picker the first time if this browser
+   * hasn't chosen a name yet.
+   */
+  function setTeam(members) {
+    teamMembers = members.map((m) => m.name).sort();
+    mentionable = [...teamMembers, ...members.map((m) => m.agent), EVERYONE];
+    $("team-size").textContent = `${teamMembers.length} ${teamMembers.length === 1 ? "person" : "people"}`;
+    if (!currentName && $("picker").hidden && !setTeam.asked) {
+      setTeam.asked = true;
+      openPicker();
+    }
+  }
+
+  /**
    * Redraws locks and activity for the chosen branch, and refreshes the
    * branch menu from the branches that currently have locks or activity.
    */
@@ -419,7 +436,7 @@
     $("count").textContent = `${text.length} / ${MAX_MESSAGE_CHARS}`;
     const match = /(?:^|\s)@([\w-]*)$/.exec(text);
     const query = match?.[1].toLowerCase();
-    suggestions = match ? MENTIONABLE.filter((n) => n.startsWith(query)).slice(0, MAX_SUGGESTIONS) : [];
+    suggestions = match ? mentionable.filter((n) => n.startsWith(query)).slice(0, MAX_SUGGESTIONS) : [];
     if (suggestions.length === 1 && suggestions[0] === query) suggestions = [];
     $("suggest").hidden = !suggestions.length;
     $("suggest").innerHTML = suggestions.map((n, i) => {
@@ -461,19 +478,19 @@
     });
     document.querySelectorAll("[data-open-picker]").forEach((b) => b.addEventListener("click", openPicker));
     $("picker-cancel").addEventListener("click", () => ($("picker").hidden = true));
-    if (TEAM_MEMBERS.includes(currentName)) pickName(currentName);
-    else openPicker();
+    // Without a saved name, the picker opens once the hub has sent the team (see setTeam).
+    if (currentName) pickName(currentName);
   }
 
   /** Opens the user picker, marking the current user; Cancel only shows once someone is chosen. */
   function openPicker() {
-    $("pick-list").innerHTML = TEAM_MEMBERS.map((n) => `
+    $("pick-list").innerHTML = teamMembers.length ? teamMembers.map((n) => `
       <button class="pick" data-name="${n}">
         <span class="av av-h" style="width:28px;height:28px;font-size:12px">${esc(initial(n))}</span>
         <span style="display:flex;flex-direction:column;min-width:0"><span style="font-size:14px;font-weight:500">${n}</span><span class="small muted">with ${n}${AGENT_SUFFIX}</span></span>
         ${n === currentName ? `<span style="margin-left:auto">${CHECK_ICON}</span>` : ""}
-      </button>`).join("");
-    $("picker-foot").hidden = !TEAM_MEMBERS.includes(currentName);
+      </button>`).join("") : `<div class="none" style="padding:8px 12px">Nobody has joined this project yet. Run <span class="mono">agentstalk</span> in the repo to join with your GitHub name.</div>`;
+    $("picker-foot").hidden = !currentName;
     $("picker").hidden = false;
   }
 
@@ -517,7 +534,7 @@
   function highlightMentions(text) {
     return esc(text).replace(/@([A-Za-z][\w-]*)/g, (whole, name) => {
       const lower = name.toLowerCase();
-      if (!MENTIONABLE.includes(lower)) return whole;
+      if (!mentionable.includes(lower)) return whole;
       return `<span class="m${lower === currentName ? " m-me" : ""}">${whole}</span>`;
     });
   }
