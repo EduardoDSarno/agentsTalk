@@ -39,6 +39,6 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/EduardoDSarno/agentsTalk.git"
+    "url": "git+https://github.com/EduardoDSarno/agentsTalk.git"
   }
 }
