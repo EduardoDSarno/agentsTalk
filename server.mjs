@@ -30,7 +30,9 @@ const CHAT_READ_DEFAULT = 20;
 const CHAT_READ_MAX = 100;
 const RECENT_EVENTS_IN_STATUS = 10;
 const HEARTBEAT_MS = 25_000;
-const TASK_STATUSES = ["todo", "doing", "done"];
+const TASK_STATUSES = ["todo", "doing", "blocked", "done"];
+// While a task is in one of these, only its owner can change it.
+const OWNED_TASK_STATUSES = ["doing", "blocked"];
 // Someone counts as present when the hub heard from them recently.
 const ACTIVE_WINDOW_MS = 10 * 60_000;
 const PRESENCE_STATUSES = ["working", "available", "away"];
@@ -110,6 +112,17 @@ async function handleRequest(req, res) {
     if (req.method === "POST" && url.pathname === "/api/presence") {
       const body = await readJson(req);
       return sendJson(res, 200, setPresence(space, agent, body.status, body.doing));
+    }
+    if (req.method === "POST" && url.pathname === "/api/tasks") {
+      const body = await readJson(req);
+      if (typeof body.title !== "string" || !body.title.trim()) throw httpError(400, "A task needs a title");
+      return sendJson(res, 200, addTask(space, agent, body.title.trim()));
+    }
+    const taskRoute = /^\/api\/tasks\/(\d+)$/.exec(url.pathname);
+    if (req.method === "POST" && taskRoute) {
+      const body = await readJson(req);
+      if (!TASK_STATUSES.includes(body.status)) throw httpError(400, `status must be one of ${TASK_STATUSES.join(", ")}`);
+      return sendJson(res, 200, updateTask(space, agent, Number(taskRoute[1]), body.status, body.note));
     }
     if (req.method === "GET" && url.pathname === "/api/status") return sendText(res, statusText(space, project, agent));
     if (req.method === "GET" && url.pathname === "/api/inbox") return sendText(res, formatInbox(space, agent));
@@ -243,7 +256,7 @@ function buildMcpServer(space, project, agent) {
   }, async ({ title }) => reply(`Added task #${addTask(space, agent, title).id}`));
 
   server.registerTool("update_task", {
-    description: "Move a task. Setting it to 'doing' makes you its owner.",
+    description: "Move a task: todo, doing, blocked (say why in the note) or done. Setting it to 'doing' claims it; a task someone else is doing or is blocked on is refused, and 'todo' releases yours.",
     inputSchema: { id: z.number().int(), status: z.enum(TASK_STATUSES), note: z.string().optional() },
   }, async ({ id, status, note }) => reply(`Task #${updateTask(space, agent, id, status, note).id} is now ${status}`));
 
@@ -483,12 +496,21 @@ function addTask(space, agent, title) {
   return task;
 }
 
-/** Moves a task to a new status; starting work on it claims ownership. */
+/**
+ * Moves a task to a new status. Starting work on it claims it, and while it is
+ * in progress or blocked only its owner can change it, so two agents never
+ * work the same task; setting it back to todo releases it. Fails with 409 when
+ * someone else holds the task.
+ */
 function updateTask(space, agent, id, status, note) {
   const task = space.tasks.find((candidate) => candidate.id === id);
-  if (!task) throw new Error(`Task #${id} does not exist`);
+  if (!task) throw httpError(404, `Task #${id} does not exist`);
+  if (task.owner && task.owner !== agent && OWNED_TASK_STATUSES.includes(task.status)) {
+    throw httpError(409, `Task #${id} is ${task.status} with ${task.owner}; ask them in the chat before changing it`);
+  }
   task.status = status;
   if (status === "doing") task.owner = agent;
+  if (status === "todo") task.owner = "";
   if (note !== undefined) task.note = note;
   logEvent(space, agent, `moved task #${id} to ${status}${note ? ` (${note})` : ""}`);
   saveStore();
