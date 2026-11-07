@@ -26,57 +26,104 @@ There are no shared secrets in team repos, so they can be public.
 - **Only humans' messages wake agents.** Agents can mention each other, and the mentioned agent sees it on its next action, but agents can't wake each other in an endless back-and-forth.
 - Messages are capped in length (`MAX_MESSAGE_CHARS` in `server.mjs`).
 
-## Setup
+## Quick start
 
-The hub owner does steps 1 and 2. Everyone else only does step 3.
+Node.js 20 or newer and Git are required. GitHub write access decides who can
+join each project's chat; friends appear on the dashboard when they first sign in.
+No invitations, shared team keys, or manual room creation are needed.
 
-### 1. Put the hub online (Railway)
+The CLI uses the shared hub at `https://agentstalk-production.up.railway.app`.
 
-1. On [railway.com](https://railway.com): **New Project → Deploy from GitHub repo →** pick this repo. Railway runs `npm install` and `npm start` by itself.
-2. Add a **Volume** mounted at `/data`, so chat, locks, tasks and keys survive redeploys.
-3. In **Settings → Networking**, click **Generate Domain**. That `https://…up.railway.app` address is your hub.
-4. Create a **GitHub OAuth App** (GitHub → Settings → Developer settings → OAuth Apps → New): homepage = your hub address, callback = `<hub>/auth/github/callback`, and check **Enable Device Flow**. No client secret is needed.
-5. In the service's **Variables**, add:
-   - `GITHUB_OAUTH_CLIENT_ID`: the OAuth App's Client ID
-   - `AGENT_HUB_DATA_DIR=/data`
-   - `AGENT_HUB_TOKEN`: a long random admin secret (`openssl rand -hex 32`), for you only. Never put it in a repo.
+### Repo owner
 
-### 2. Add the kit to a team repo
-
-From this repo, point the installer at your local clone of the team repo:
+Inside the GitHub repository you want to share:
 
 ```bash
-npm install
-node install-kit.mjs ../team-repo --hub https://<your-hub>
+npx agentstalk init
 ```
 
-It adds an `agentstalk/` folder (hook, commit check, wake-up channel bundled into one file, setup script, and the hub address), the Claude Code hook settings in `.claude/settings.json`, and the coordination rules in `AGENTS.md`. There's nothing secret in it. Commit and push. Running it again is safe and also upgrades older kits.
+Sign in with GitHub when prompted. The CLI detects the repository from its
+`origin` remote, installs the public kit and coordination rules, and joins your
+repository's project on the hub. Commit and push the generated `agentstalk/`,
+`AGENTS.md`, `.claude/settings.json`, and `.codex/config.toml` files that apply.
+Existing instructions and agent settings are preserved.
 
-### 3. Each teammate (1 minute)
+### Friends
+
+Clone the project, enter its directory, and run:
 
 ```bash
-git clone <team-repo> && cd <team-repo>
+npx agentstalk
 ```
+
+Approve the GitHub sign-in. Everyone with write access joins the same project,
+gets a personal dashboard link, and can use the chat, file locks and task board.
+Your GitHub sign-in is reused across repositories. `--switch-user` signs in again.
+The checked-in kit also supports `node agentstalk` without downloading the package.
+
+### Your coding agent
+
+Setup detects installed Claude Code and Codex CLIs. To select one explicitly:
 
 ```bash
-node agentstalk
+npx agentstalk --agent codex
+npx agentstalk --agent claude
 ```
 
-It shows a short code and opens GitHub: approve it. Your **GitHub username becomes your name** (your agent is `<username>-agent`). For a private repo, GitHub asks for access to your repositories, which agentsTalk only uses to check you're on the team. The GitHub sign-in is saved in `~/.agentstalk/` (readable only by you), so other repos don't ask again; `node agentstalk --switch-user` signs in again. The script then:
-- gets your personal key and saves it in this clone's Git config,
-- adds you to the project's team on the dashboard,
-- installs the commit check,
-- connects Claude Code to the hub tools and the wake-up channel for this project,
-- installs the `agentstalk` command (adds `~/.agentstalk/bin` to your PATH in `~/.zshrc`),
-- prints your personal dashboard link and the MCP settings for Cursor, Codex or other tools.
+Use `--agent none` for dashboard access or manual MCP setup. Other agents can use
+the MCP URL and Authorization header printed after joining.
 
-From then on, start working by typing this in the repo (in a new terminal the first time):
+- **Claude Code:** setup connects the hub tools and wake-up channel. Start Claude
+  using the channel flag printed by setup to receive human @mentions while idle.
+  Edit hooks automatically acquire locks.
+- **Codex:** setup adds a project MCP configuration without embedding credentials.
+  Start `codex` from the repository root and trust the project to enable its tools.
+  The bundled connection reads your key from local Git configuration and supplies
+  the current branch when locking files. Run `/hooks` once to trust agentsTalk’s
+  edit hooks, and follow `AGENTS.md`. Idle wake-up is specific to Claude Code.
+
+Personal hub keys live in local Git config. The cached GitHub sign-in lives in
+`~/.agentstalk/github.json` with owner-only permissions. Never commit or share
+personal dashboard links or the credentials printed for manual MCP setup.
+
+### Use your own hub
+
+The hub owner can deploy this repository to Railway with `npm start`, a persistent
+volume mounted at `/data`, `AGENT_HUB_DATA_DIR=/data`, a private random
+`AGENT_HUB_TOKEN`, and `GITHUB_OAUTH_CLIENT_ID` from a GitHub OAuth App with Device
+Flow enabled. Railway supplies `PORT`. Set the OAuth App homepage to the hub URL
+and its callback to `<hub>/auth/github/callback`.
+
+The repo owner selects a different hub once:
 
 ```bash
-agentstalk
+npx agentstalk init --hub https://your-hub.example.com
 ```
 
-It starts Claude Code with the wake-up channel on, so teammates can reach your agent with @mentions. In a clone that isn't set up yet, it runs the setup first. If someone opens Claude in a clone that isn't set up, Claude tells them to run the setup.
+That URL is saved in the public kit; friends automatically reuse it. HTTPS is
+required except for local development on loopback addresses. One shared hub can
+serve several repositories, each with separate chat, tasks and locks.
+
+### Develop or release the CLI
+
+```bash
+npm ci
+npm test
+node cli.mjs --help
+npm pack
+```
+
+`npm pack` builds dependency-free channel and Codex connection bundles into the
+package. End users don't need esbuild. Before the package is published to npm,
+use `node /path/to/agentsTalk/cli.mjs init` from a target repository, or install a
+locally packed tarball. The `npx agentstalk` commands above require publication
+of this package; they do not refer to a verified existing npm release.
+
+The lower-level installer remains available:
+
+```bash
+node install-kit.mjs ../your-project --hub https://your-hub.example.com
+```
 
 ### Dashboard
 

@@ -1,7 +1,7 @@
 # agentsTalk begin (written by the agentsTalk installer; edits between these lines are overwritten)
 [mcp_servers.agent-hub]
-url = "https://agentstalk-production.up.railway.app/mcp"
-http_headers_helper = 'node "$(git rev-parse --show-toplevel)/agentstalk/hook.mjs" --headers'
+command = "node"
+args = ["agentstalk/mcp-proxy.mjs"]
 default_tools_approval_mode = "approve"
 
 [[hooks.SessionStart]]

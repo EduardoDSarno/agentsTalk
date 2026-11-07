@@ -1,10 +1,13 @@
 {
-  "name": "agent-hub",
+  "name": "agentstalk",
   "version": "1.0.0",
   "description": "Shared file locks, tasks, messages and live dashboard for a team of AI agents",
   "main": "server.mjs",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "test": "npm run build && node --test",
+    "prepack": "npm run build",
+    "build": "node scripts/build-kit.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -19,5 +22,23 @@
   },
   "devDependencies": {
     "esbuild": "^0.28.2"
+  },
+  "bin": {
+    "agentstalk": "cli.mjs"
+  },
+  "files": [
+    "cli.mjs",
+    "install-kit.mjs",
+    "kit/",
+    "hook.mjs",
+    "pre-commit.mjs",
+    "dist/",
+    "server.mjs",
+    "dashboard.html",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EduardoDSarno/agentsTalk.git"
   }
 }

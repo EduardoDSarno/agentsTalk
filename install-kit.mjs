@@ -7,14 +7,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";
-import { build } from "esbuild";
+import { githubRepoFromRemote } from "./kit/github-repo.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 // A visible folder with a package.json, so teammates set up with just `node agentstalk`.
 const KIT_FOLDER = "agentstalk";
 // Where earlier versions put the kit; the installer moves it.
 const OLD_KIT_FOLDERS = [".agent-hub", "agenttalk"];
-const GITHUB_REMOTE_PATTERN = /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/;
 const HOOK_COMMAND = `node "$CLAUDE_PROJECT_DIR/${KIT_FOLDER}/hook.mjs"`;
 const HOOK_EVENTS = {
   SessionStart: undefined,
@@ -30,7 +29,6 @@ const CODEX_HOOK_EVENTS = [
   ["PostToolUse", "^Bash$"],
 ];
 const CODEX_HOOK_COMMAND = `AGENTSTALK_TOOL=codex node "$(git rev-parse --show-toplevel)/${KIT_FOLDER}/hook.mjs"`;
-const CODEX_HEADERS_COMMAND = `node "$(git rev-parse --show-toplevel)/${KIT_FOLDER}/hook.mjs" --headers`;
 const CODEX_BLOCK_START = "# agentsTalk begin (written by the agentsTalk installer; edits between these lines are overwritten)";
 const CODEX_BLOCK_END = "# agentsTalk end";
 const RULES_MARKER = "## Team coordination (agent-hub)";
@@ -44,7 +42,7 @@ const RULES = `${RULES_MARKER}
 - Never use \`git commit --no-verify\`: it skips the team's lock check.
 `;
 
-await main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
 
 /**
  * Puts everything teammates need inside the team repo, so their whole setup
@@ -61,6 +59,10 @@ async function main() {
     console.error("Usage: node install-kit.mjs <path-to-team-repo> --hub <hub-url>");
     process.exit(1);
   }
+  await installKit(repo, values.hub);
+}
+
+export async function installKit(repo, hubUrl) {
   const githubRepo = githubRepoOf(repo);
   const kit = path.join(repo, KIT_FOLDER);
   fs.mkdirSync(kit, { recursive: true });
@@ -68,11 +70,15 @@ async function main() {
   // Makes `node agentstalk` run the join script.
   writeJson(path.join(kit, "package.json"), { name: "agentstalk-kit", private: true, type: "module", main: "join.mjs" });
 
-  for (const file of ["hook.mjs", "pre-commit.mjs", "kit/join.mjs"]) fs.copyFileSync(path.join(DIR, file), path.join(kit, path.basename(file)));
-  await bundleChannel(path.join(kit, "channel.mjs"));
-  writeJson(path.join(kit, "config.json"), { hubUrl: values.hub, repo: githubRepo });
+  for (const file of ["hook.mjs", "pre-commit.mjs", "kit/join.mjs", "kit/github-repo.mjs"]) fs.copyFileSync(path.join(DIR, file), path.join(kit, path.basename(file)));
+  for (const file of ["channel.mjs", "mcp-proxy.mjs"]) {
+    const built = path.join(DIR, "dist", file);
+    if (fs.existsSync(built)) fs.copyFileSync(built, path.join(kit, file));
+    else await bundle(file, path.join(kit, file));
+  }
+  writeJson(path.join(kit, "config.json"), { hubUrl, repo: githubRepo });
   addHookSettings(path.join(repo, ".claude", "settings.json"));
-  addCodexConfig(path.join(repo, ".codex", "config.toml"), values.hub);
+  addCodexConfig(path.join(repo, ".codex", "config.toml"));
   addRules(path.join(repo, "AGENTS.md"));
 
   console.log(`Kit installed in ${path.resolve(repo)} for ${githubRepo ?? "a repo without a GitHub remote yet"}.`);
@@ -84,16 +90,21 @@ async function main() {
 function githubRepoOf(repo) {
   try {
     const remote = execFileSync("git", ["remote", "get-url", "origin"], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return GITHUB_REMOTE_PATTERN.exec(remote)?.[1];
+    return githubRepoFromRemote(remote);
   } catch {
     return undefined; // no origin yet; the join script reads it from each clone
   }
 }
 
 /** Bundles the channel and its MCP dependency into one file, so teammates never run npm install. */
-async function bundleChannel(outfile) {
+export async function bundleKit(directory) {
+  for (const file of ["channel.mjs", "mcp-proxy.mjs"]) await bundle(file, path.join(directory, file));
+}
+
+async function bundle(file, outfile) {
+  const { build } = await import("esbuild");
   await build({
-    entryPoints: [path.join(DIR, "channel.mjs")],
+    entryPoints: [path.join(DIR, file)],
     outfile,
     bundle: true,
     platform: "node",
@@ -126,9 +137,9 @@ function addHookSettings(file) {
  * Adds the hub connection and the hooks to the repo's Codex config, between
  * marker lines so running the installer again replaces just this part and
  * keeps whatever else the file holds. No secret goes in: the MCP connection
- * gets its key from a helper that reads this clone's Git config.
+ * gets its key from a bundled connection that reads this clone's Git config.
  */
-function addCodexConfig(file, hubUrl) {
+function addCodexConfig(file) {
   const hooks = CODEX_HOOK_EVENTS.map(([event, matcher]) => [
     `[[hooks.${event}]]`,
     ...(matcher ? [`matcher = ${JSON.stringify(matcher)}`] : []),
@@ -140,8 +151,8 @@ function addCodexConfig(file, hubUrl) {
   const block = [
     CODEX_BLOCK_START,
     "[mcp_servers.agent-hub]",
-    `url = ${JSON.stringify(`${hubUrl.replace(/\/$/, "")}/mcp`)}`,
-    `http_headers_helper = '${CODEX_HEADERS_COMMAND}'`,
+    'command = "node"',
+    `args = ["${KIT_FOLDER}/mcp-proxy.mjs"]`,
     // The hub's tools only coordinate (chat, locks, tasks), so agents don't wait for approval on each call.
     'default_tools_approval_mode = "approve"',
     "",
@@ -152,6 +163,10 @@ function addCodexConfig(file, hubUrl) {
   const current = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
   const start = current.indexOf(CODEX_BLOCK_START);
   const end = current.indexOf(CODEX_BLOCK_END);
+  if (start === -1 && /^\s*\[mcp_servers\.(?:agent-hub|"agent-hub"|'agent-hub')(?:\]|\.)/m.test(current)) {
+    console.log("Existing Codex agent-hub configuration preserved; enable its hooks manually if needed.");
+    return;
+  }
   const kept = (start === -1 || end === -1 ? current : `${current.slice(0, start)}${current.slice(end + CODEX_BLOCK_END.length)}`).trim();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${kept}${kept ? "\n\n" : ""}${block}`);
