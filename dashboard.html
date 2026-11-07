@@ -27,7 +27,12 @@
   #messages li.human { background: var(--human); }
   form { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
   input { font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); }
-  #name { width: 120px; }
+  #who { background: var(--bg); color: var(--text); border: 1px solid var(--line); }
+  #picker { position: fixed; inset: 0; display: grid; place-items: center; background: rgb(0 0 0 / .45); padding: 16px; }
+  #picker[hidden] { display: none; }
+  #picker .card { background: var(--card); border-radius: 12px; padding: 24px; width: min(360px, 100%); text-align: center; }
+  #picker h2 { font-size: 18px; text-transform: none; letter-spacing: 0; color: var(--text); }
+  #picker-options { display: grid; gap: 8px; margin-top: 16px; }
   #text { flex: 1; min-width: 160px; }
   button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
   .who { font-weight: 600; }
@@ -45,7 +50,7 @@
     <h2>Team chat</h2>
     <ul id="messages"></ul>
     <form id="chat-form">
-      <input id="name" placeholder="your name" required>
+      <button type="button" id="who" title="Switch user"></button>
       <input id="text" placeholder="Message… use @name to wake an agent, @all for everyone" maxlength="1000" required>
       <button>Send</button>
     </form>
@@ -56,14 +61,22 @@
     <section><h2>Activity</h2><ul id="events"></ul></section>
   </div>
 </main>
+<div id="picker" hidden>
+  <div class="card">
+    <h2>Who are you?</h2>
+    <p class="muted">Your messages in the team chat will use this name.</p>
+    <div id="picker-options"></div>
+  </div>
+</div>
 <script>
   const REFRESH_MS = 2000;
   const NAME_KEY = "agent-hub-name";
+  const TEAM_MEMBERS = ["eduardo", "victor", "ratinder"];
   const token = new URLSearchParams(location.search).get("token") ?? "";
-  const nameInput = document.getElementById("name");
+  let currentName = readSavedName();
   let lastMessageId = 0;
 
-  nameInput.value = readSavedName();
+  setUpPicker();
   document.getElementById("chat-form").addEventListener("submit", sendChat);
   refresh();
   setInterval(refresh, REFRESH_MS);
@@ -88,12 +101,40 @@
   async function sendChat(event) {
     event.preventDefault();
     const textInput = document.getElementById("text");
-    const name = nameInput.value.trim();
-    saveName(name);
-    const url = `/api/chat?agent=${encodeURIComponent(name)}&token=${encodeURIComponent(token)}`;
+    if (!currentName) return showPicker();
+    const url = `/api/chat?agent=${encodeURIComponent(currentName)}&token=${encodeURIComponent(token)}`;
     await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: textInput.value, human: true }) });
     textInput.value = "";
     refresh();
+  }
+
+  /**
+   * Builds the "Who are you?" screen from the team list and shows it on first
+   * launch, or when the saved name isn't a team member. The choice is saved in
+   * this browser, so it's only asked once; the name button reopens it.
+   */
+  function setUpPicker() {
+    document.getElementById("picker-options").innerHTML =
+      TEAM_MEMBERS.map((name) => `<button type="button" data-name="${name}">${name}</button>`).join("");
+    document.getElementById("picker-options").addEventListener("click", (event) => {
+      if (event.target.dataset.name) pickName(event.target.dataset.name);
+    });
+    document.getElementById("who").addEventListener("click", showPicker);
+    if (TEAM_MEMBERS.includes(currentName)) pickName(currentName);
+    else showPicker();
+  }
+
+  /** Saves the chosen name, shows it next to the message box and closes the picker. */
+  function pickName(name) {
+    currentName = name;
+    saveName(name);
+    document.getElementById("who").textContent = name;
+    document.getElementById("picker").hidden = true;
+  }
+
+  /** Opens the "Who are you?" screen. */
+  function showPicker() {
+    document.getElementById("picker").hidden = false;
   }
 
   /** Redraws the chat only when there are new messages, keeping the view pinned to the newest one. */
