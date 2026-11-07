@@ -266,6 +266,7 @@ body { margin: 0; }
   const MAX_SUGGESTIONS = 7;
   const SOON_MINUTES = 5;
   const GROUP_WINDOW_MS = 5 * 60_000;
+  const BRANCH_MENU_WINDOW_MS = 24 * 60 * 60_000; // activity older than this no longer adds a branch to the menu
   const NAME_KEY = "agent-hub-name";
   const THEME_KEY = "agent-hub-theme";
   const ACTIVITY_KEY = "agent-hub-activity";
@@ -758,10 +759,11 @@ body { margin: 0; }
   /**
    * Redraws locks and activity for the chosen branch (and the chat timeline's
    * activity lines), and refreshes the branch menu from the branches that
-   * currently have locks or activity.
+   * currently have locks or recent activity, so finished branches drop out.
    */
   function renderSidePanels() {
-    const branches = [...new Set([...lastLocks.map((l) => l.branch), ...lastEvents.map((e) => e.branch)].filter(Boolean))].sort();
+    const recent = lastEvents.filter((e) => Date.now() - e.at < BRANCH_MENU_WINDOW_MS);
+    const branches = [...new Set([...lastLocks.map((l) => l.branch), ...recent.map((e) => e.branch)].filter(Boolean))].sort();
     if (branchFilter && !branches.includes(branchFilter)) branches.unshift(branchFilter);
     const html = [`<option value="">All branches</option>`, ...branches.map((b) => `<option value="${esc(b)}"${b === branchFilter ? " selected" : ""}>${esc(b)}</option>`)].join("");
     if ($("branch").innerHTML !== html) $("branch").innerHTML = html;
