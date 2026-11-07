@@ -91,6 +91,17 @@
   .row:hover { background: var(--hover); }
   .lock-row { grid-template-columns: 14px minmax(0, 1fr) auto; }
   .task-row { grid-template-columns: 14px 22px minmax(0, 1fr) auto; column-gap: 8px; }
+  .member-row { display: flex; align-items: flex-start; gap: 9px; padding: 8px 16px; }
+  .member-row > .dot { margin-top: 7px; }
+  .member-main { min-width: 0; flex: 1; }
+  .member-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .member-name { overflow-wrap: anywhere; font-weight: 500; }
+  .member-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; color: var(--fg2); }
+  .member-doing { margin: 3px 0; overflow-wrap: anywhere; }
+  .status-working { background: var(--acc-fg); }
+  .status-available { background: var(--ok); }
+  .status-away { background: var(--icon); }
+  .wakeable { color: var(--ok); }
   .event-row { grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; }
   .clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .lh { line-height: 20px; }
@@ -162,6 +173,10 @@
     </main>
 
     <aside aria-label="Hub details">
+      <section aria-labelledby="team-title">
+        <div class="sec-head"><h2 id="team-title">Team</h2><span class="tn small muted" id="member-count"></span></div>
+        <div id="members"></div>
+      </section>
       <section>
         <div class="sec-head"><h2>Locked files</h2><span class="tn small muted" id="lock-count"></span></div>
         <div id="locks"></div>
@@ -368,10 +383,47 @@
     teamMembers = members.map((m) => m.name).sort();
     mentionable = [...teamMembers, ...members.map((m) => m.agent), EVERYONE];
     $("team-size").textContent = `${teamMembers.length} ${teamMembers.length === 1 ? "person" : "people"}`;
+    renderTeam(members);
     if (!currentName && $("picker").hidden && !setTeam.asked) {
       setTeam.asked = true;
       openPicker();
     }
+  }
+
+  /** Shows agent presence for every member; older hubs fall back to away. */
+  function renderTeam(members) {
+    $("member-count").textContent = members.length;
+    const labels = { working: "Working", available: "Available", away: "Away" };
+    $("members").innerHTML = members.length ? [...members].sort((a, b) => a.name.localeCompare(b.name)).map((member) => {
+      const status = Object.hasOwn(labels, member.status) ? member.status : "away";
+      const locks = Number.isFinite(member.locks) ? Math.max(0, Math.floor(member.locks)) : 0;
+      const seen = Number.isFinite(member.lastSeen) && member.lastSeen > 0 ? member.lastSeen : null;
+      return `<div class="member-row">
+        <span class="dot status-${status}" aria-hidden="true"></span>
+        <div class="member-main">
+          <div class="member-head"><span class="member-name">@${esc(member.agent || member.name)}</span><span class="small muted">${labels[status]}</span></div>
+          <div class="small muted">${esc(member.name)}</div>
+          ${member.doing ? `<div class="member-doing">${esc(member.doing)}</div>` : ""}
+          <div class="member-meta">
+            <span title="${seen ? esc(new Date(seen).toLocaleString()) : "No activity recorded"}">Last seen: ${lastSeenLabel(seen)}</span>
+            <span>${locks} locked ${locks === 1 ? "file" : "files"}</span>
+            <span class="${member.wakeable ? "wakeable" : ""}">${member.wakeable ? "Wakeable" : "Not wakeable"}</span>
+          </div>
+        </div>
+      </div>`;
+    }).join("") : `<div class="none">No teammates yet</div>`;
+  }
+
+  /** Relative times refresh with the state; the exact time is available on hover. */
+  function lastSeenLabel(at) {
+    if (at === null) return "never";
+    const minutes = Math.floor(Math.max(0, Date.now() - at) / 60_000);
+    if (minutes < 1) return "just now";
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} ${hours === 1 ? "hr" : "hrs"} ago`;
+    const days = Math.floor(hours / 24);
+    return `${days} ${days === 1 ? "day" : "days"} ago`;
   }
 
   /**
