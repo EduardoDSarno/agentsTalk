@@ -145,9 +145,9 @@
       </div>
       <div class="composer-wrap column">
         <div class="composer-box">
-          <div class="pop" id="suggest" aria-label="Mention suggestions" hidden></div>
+          <div class="pop" id="suggest" role="listbox" aria-label="Mention suggestions" hidden></div>
           <div class="composer">
-            <textarea id="draft" rows="2" aria-label="Message" placeholder="Message… use @name to wake an agent, @all for everyone"></textarea>
+            <textarea id="draft" rows="2" aria-label="Message" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false" placeholder="Message… use @name to wake an agent, @all for everyone"></textarea>
             <div class="composer-bar">
               <button class="ghost user-btn" data-open-picker><span class="av av-h" style="width:18px;height:18px;font-size:10px" data-user-initial></span><span data-user-name></span></button>
               <span class="hints"><kbd>↵</kbd>send<kbd style="margin-left:6px">⇧↵</kbd>new line</span>
@@ -221,6 +221,8 @@
   let lastMessages = [];
   let chatKey = "";
   let suggestions = [];
+  let selectedSuggestion = 0;
+  let suggestionsDismissed = false;
 
   /**
    * Sets up theme, sign-in, user picker and composer, then keeps the page in
@@ -430,13 +432,28 @@
   function setUpComposer() {
     const draft = $("draft");
     draft.maxLength = MAX_MESSAGE_CHARS;
-    draft.addEventListener("input", updateComposer);
+    draft.addEventListener("input", () => {
+      selectedSuggestion = 0;
+      suggestionsDismissed = false;
+      updateComposer();
+    });
     draft.addEventListener("keydown", (event) => {
-      if ((event.key === "Tab" || event.key === "Enter") && suggestions.length && !event.shiftKey) {
-        event.preventDefault();
-        return insertMention(suggestions[0]);
+      if (event.isComposing) return;
+      if (suggestions.length) {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          selectedSuggestion = (selectedSuggestion + (event.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length;
+          return renderSuggestions();
+        }
+        if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey) {
+          event.preventDefault();
+          return insertMention(suggestions[selectedSuggestion]);
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          return hideSuggestions();
+        }
       }
-      if (event.key === "Escape") return hideSuggestions();
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         sendChat();
@@ -459,13 +476,22 @@
     $("count").textContent = `${text.length} / ${MAX_MESSAGE_CHARS}`;
     const match = /(?:^|\s)@([\w-]*)$/.exec(text);
     const query = match?.[1].toLowerCase();
-    suggestions = match ? mentionable.filter((n) => n.startsWith(query)).slice(0, MAX_SUGGESTIONS) : [];
+    suggestions = match && !suggestionsDismissed ? mentionable.filter((n) => n.startsWith(query)).slice(0, MAX_SUGGESTIONS) : [];
     if (suggestions.length === 1 && suggestions[0] === query) suggestions = [];
+    selectedSuggestion = Math.min(selectedSuggestion, Math.max(0, suggestions.length - 1));
+    renderSuggestions();
+  }
+
+  /** Keeps the visible highlight and screen reader selection in sync. */
+  function renderSuggestions() {
     $("suggest").hidden = !suggestions.length;
+    $("draft").setAttribute("aria-expanded", String(Boolean(suggestions.length)));
+    if (suggestions.length) $("draft").setAttribute("aria-activedescendant", `suggestion-${selectedSuggestion}`);
+    else $("draft").removeAttribute("aria-activedescendant");
     $("suggest").innerHTML = suggestions.map((n, i) => {
       const agent = n.endsWith(AGENT_SUFFIX);
       const kind = n === EVERYONE ? "Everyone" : agent ? "Agent" : "Human";
-      return `<button class="sug${i === 0 ? " sel" : ""}" data-name="${n}"><span class="av ${agent ? "av-a" : "av-h"}" style="width:18px;height:18px;font-size:10px">${n === EVERYONE ? "@" : esc(initial(n))}</span><span>@${n}</span><span class="kind">${kind}</span></button>`;
+      return `<button id="suggestion-${i}" role="option" aria-selected="${i === selectedSuggestion}" class="sug${i === selectedSuggestion ? " sel" : ""}" data-name="${esc(n)}"><span class="av ${agent ? "av-a" : "av-h"}" style="width:18px;height:18px;font-size:10px">${n === EVERYONE ? "@" : esc(initial(n))}</span><span>@${n}</span><span class="kind">${kind}</span></button>`;
     }).join("");
   }
 
@@ -480,7 +506,9 @@
   /** Closes the suggestion list without changing the draft. */
   function hideSuggestions() {
     suggestions = [];
-    $("suggest").hidden = true;
+    selectedSuggestion = 0;
+    suggestionsDismissed = true;
+    renderSuggestions();
   }
 
   /** Sending needs a chosen user, a connected hub, and a non-empty message within the length limit. */
