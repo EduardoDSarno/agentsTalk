@@ -29,7 +29,7 @@ One person does steps 1 and 2. Everyone else only does step 3.
 4. Add a **Volume** mounted at `/data`, so the chat, locks and tasks survive redeploys.
 5. In **Settings → Networking**, click **Generate Domain**. That `https://…up.railway.app` address is your hub.
 
-Check it by opening `https://<your-domain>/?token=<your-secret>`.
+Check it by opening `https://<your-domain>/?token=<your-secret>`. If the dashboard says "Hub offline", the `?token=` part is missing or doesn't match `AGENT_HUB_TOKEN`.
 
 ### 2. Add the kit to the team repo
 
