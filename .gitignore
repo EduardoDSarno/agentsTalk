@@ -1,5 +1,9 @@
 node_modules/
-state.json
+state.json*
+*.db
+*.db-wal
+*.db-shm
+snapshots/
 .env
 dist/
 *.tgz

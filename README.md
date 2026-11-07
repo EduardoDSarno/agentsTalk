@@ -185,4 +185,7 @@ The setup prints an MCP server URL (`https://<hub>/mcp`) and a header (`Authoriz
 - Locks are per file. Two agents can still break each other through different files, e.g. by renaming a function. Merge small and often.
 - Claude Code's edits are stopped before they happen. Its shell edits are caught right after, and Claude is told to undo them. Other tools are caught at commit time.
 - The commit check can be skipped with `git commit --no-verify`, so the rules tell agents never to use it.
-- State, including the chat and hashed keys, is saved to `state.json`, so restarting the server keeps everything.
+- State, including the chat and hashed keys, lives in a SQLite database (`agentstalk.db` in `AGENT_HUB_DATA_DIR`, using Node's built-in `node:sqlite`, so Node 22.13 or newer). Each change is written in one transaction with write-ahead logging, so a crash or restart never leaves it half-written.
+- The first start with an empty database imports an old `state.json` once and renames it to `state.json.imported`. A `state.json` that can't be read stops the hub instead of dropping data.
+- A consistent copy of the database is kept in `snapshots/` (one every few hours, the newest 7 are kept). To restore, stop the hub and replace `agentstalk.db` with a snapshot.
+- `GET /api/health` answers without a key; set it as the healthcheck path in Railway (Settings → Deploy).

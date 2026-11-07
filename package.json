@@ -10,7 +10,7 @@
     "build": "node scripts/build-kit.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "keywords": [],
   "author": "",
