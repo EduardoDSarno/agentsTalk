@@ -43,6 +43,10 @@ test('tasks can be added and moved over HTTP, and a task being worked on cannot 
   assert.equal((await call(`/api/tasks/${id}`, keys.alice, { status: 'doing', note: 'drafting' })).body.owner, 'alice-agent');
   assert.equal((await call(`/api/tasks/${id}`, keys.bob, { status: 'doing' })).status, 409);
   assert.equal((await call(`/api/tasks/${id}?as=human`, keys.bob, { status: 'done' })).status, 409);
+  // The PR number is stored on the task, must be a positive whole number, and survives later updates.
+  assert.equal((await call(`/api/tasks/${id}`, keys.alice, { status: 'doing', pr: 'abc' })).status, 400);
+  assert.equal((await call(`/api/tasks/${id}`, keys.alice, { status: 'doing', pr: 17 })).body.pr, 17);
+  assert.equal((await call(`/api/tasks/${id}`, keys.alice, { status: 'doing' })).body.pr, 17);
 
   // The owner can block it with a reason, which still keeps others out, then release it.
   const blocked = await call(`/api/tasks/${id}`, keys.alice, { status: 'blocked', note: 'waiting for review' });

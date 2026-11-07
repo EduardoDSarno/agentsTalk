@@ -141,7 +141,7 @@ async function handleRequest(req, res) {
     if (req.method === "POST" && taskRoute) {
       const body = await readJson(req);
       if (!TASK_STATUSES.includes(body.status)) throw httpError(400, `status must be one of ${TASK_STATUSES.join(", ")}`);
-      return sendJson(res, 200, updateTask(space, agent, Number(taskRoute[1]), body.status, body.note));
+      return sendJson(res, 200, updateTask(space, agent, Number(taskRoute[1]), body.status, body.note, body.pr));
     }
     if (req.method === "GET" && url.pathname === "/api/status") return sendText(res, statusText(space, project, agent));
     if (req.method === "GET" && url.pathname === "/api/inbox") return sendText(res, formatInbox(space, agent));
@@ -275,8 +275,8 @@ function buildMcpServer(space, project, agent) {
 
   server.registerTool("update_task", {
     description: "Move a task: todo, doing, blocked (say why in the note) or done. Setting it to 'doing' claims it; a task someone else is doing or is blocked on is refused, and 'todo' releases yours.",
-    inputSchema: { id: z.number().int(), status: z.enum(TASK_STATUSES), note: z.string().optional() },
-  }, async ({ id, status, note }) => reply(`Task #${updateTask(space, agent, id, status, note).id} is now ${status}`));
+    inputSchema: { id: z.number().int(), status: z.enum(TASK_STATUSES), note: z.string().optional(), pr: z.number().int().positive().optional().describe("Pull request number for this task; set it when you open the PR") },
+  }, async ({ id, status, note, pr }) => reply(`Task #${updateTask(space, agent, id, status, note, pr).id} is now ${status}`));
 
   server.registerTool("set_status", {
     description: "Tell the team what you're doing without posting in chat: status working, available or away, plus a short 'doing' line. Shows in the dashboard's team panel. Use it for progress instead of chat.",
@@ -512,9 +512,10 @@ function addTask(space, agent, title) {
  * someone else holds the task, unless it has gone stale (its owner hasn't
  * been seen for a long time), in which case anyone may take it over.
  */
-function updateTask(space, agent, id, status, note) {
+function updateTask(space, agent, id, status, note, pr) {
   const task = space.tasks.find((candidate) => candidate.id === id);
   if (!task) throw httpError(404, `Task #${id} does not exist`);
+  if (pr !== undefined && (!Number.isInteger(pr) || pr <= 0)) throw httpError(400, "pr must be a pull request number");
   const takeover = task.owner && task.owner !== agent && isStale(space, task);
   if (task.owner && task.owner !== agent && OWNED_TASK_STATUSES.includes(task.status) && !takeover) {
     throw httpError(409, `Task #${id} is ${task.status} with ${task.owner}; ask them in the chat before changing it`);
@@ -525,6 +526,7 @@ function updateTask(space, agent, id, status, note) {
   if (status === "doing") task.owner = agent;
   if (status === "todo") task.owner = "";
   if (note !== undefined) task.note = note;
+  if (pr !== undefined) task.pr = pr;
   logEvent(space, agent, `moved task #${id} to ${status}${note ? ` (${note})` : ""}`);
   saveStore();
   return task;
@@ -560,7 +562,7 @@ function statusText(space, project, agent) {
     ...(locks.length ? locks.map((l) => `- ${l.path} — ${l.owner} on ${branchLabel(l.branch)}${l.reason ? ` (${l.reason})` : ""}, ${l.minutesLeft} min left`) : ["- none"]),
     "",
     "Open tasks:",
-    ...(open.length ? open.map((t) => `- #${t.id} [${t.status}] ${t.owner ? t.owner : "unclaimed"}${t.stale ? " (stale, you may take it over)" : ""}: ${t.title}${t.note ? ` (${t.note})` : ""}`) : ["- none"]),
+    ...(open.length ? open.map((t) => `- #${t.id} [${t.status}] ${t.owner ? t.owner : "unclaimed"}${t.stale ? " (stale, you may take it over)" : ""}: ${t.title}${t.pr ? ` [PR #${t.pr}]` : ""}${t.note ? ` (${t.note})` : ""}`) : ["- none"]),
     ...(tasks.length > open.length ? [`(${tasks.length - open.length} done)`] : []),
     "",
     formatInbox(space, agent) || "No new chat messages for you.",

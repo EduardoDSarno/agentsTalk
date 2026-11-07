@@ -476,6 +476,8 @@ body { margin: 0; }
     const owner = t.owner
       ? `<span style="display:inline-flex;align-items:center;gap:5px;min-width:0">${personAvatar(t.owner, t.owner.endsWith(AGENT_SUFFIX), 16)}<span class="clip">${esc(t.owner)}</span></span>`
       : "<span>Unassigned</span>";
+    // The pull request for this task, linked to GitHub (the project is owner/repo).
+    const pr = t.pr ? `<a class="mono" href="https://github.com/${esc(project)}/pull/${esc(t.pr)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #${esc(t.pr)}</a>` : "";
     const stale = t.stale ? `<span class="warn" title="Its owner has been quiet for a while; anyone can take it over">Stale</span>` : "";
     const detail = !open ? "" : `<div class="tdetail">${actions.length
       ? `<input class="inp" id="task-note-${esc(t.id)}" data-task-note="${esc(t.id)}" aria-label="Note for task #${esc(t.id)}" placeholder="Note (required to block)" value="${esc(taskNotes.get(t.id) ?? t.note ?? "")}"${enabled ? "" : " disabled"}>
@@ -487,7 +489,7 @@ body { margin: 0; }
         <span style="display:flex;flex-direction:column;min-width:0">
           <span style="line-height:20px;overflow-wrap:anywhere;color:${t.status === "done" ? "var(--fg2)" : "var(--fg)"}">${esc(t.title)}</span>
           ${t.note ? `<span class="sm mut">${esc(t.note)}</span>` : ""}
-          <span class="sm mut" style="display:flex;align-items:center;gap:6px;margin-top:2px"><span class="mono tn">#${esc(t.id)}</span>${owner}${stale}</span>
+          <span class="sm mut" style="display:flex;align-items:center;gap:6px;margin-top:2px"><span class="mono tn">#${esc(t.id)}</span>${owner}${pr}${stale}</span>
         </span>
       </button>${detail}</div>`;
   }
