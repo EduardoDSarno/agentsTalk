@@ -59,6 +59,18 @@ test('the chosen branch filters the activity lines in the chat', () => {
   assert.ok(!html.includes('one.ts'));
 });
 
+test('the branch menu lists branches with locks or recent activity, not old finished ones', () => {
+  const p = page();
+  const recent = Date.now() - 60_000, old = Date.now() - 3 * 24 * 60 * 60_000;
+  p.run(`lastMessages = []; lastTasks = [];
+         lastLocks = ${JSON.stringify([{ path: 'a.ts', owner: 'x-agent', branch: 'locked-branch' }])};
+         lastEvents = ${JSON.stringify([{ at: recent, agent: 'a-agent', text: 'edit', branch: 'recent-branch' }, { at: old, agent: 'b-agent', text: 'edit', branch: 'deleted-branch' }])};
+         renderSidePanels()`);
+  const menu = p.element('branch').innerHTML;
+  assert.ok(menu.includes('locked-branch') && menu.includes('recent-branch'));
+  assert.ok(!menu.includes('deleted-branch'));
+});
+
 test('people are boxed, agents are plain, consecutive messages group, and mentions of you stand out', () => {
   const p = page();
   p.run(`lastMessages = ${JSON.stringify([message(1, 'bob', '@alice can you look?', 0), message(2, 'bob', 'thanks', 1), message(3, 'bob-agent', 'hi @all <b>', 2), message(4, 'alice', '@bob-agent go', 3)])};

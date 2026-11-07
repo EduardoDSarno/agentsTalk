@@ -119,8 +119,10 @@ async function handleRequest(req, res) {
     const asHuman = url.searchParams.get("as") === "human";
     const agent = caller.admin ? cleanName(url.searchParams.get("agent")) : asHuman ? caller.login : `${caller.login}${AGENT_SUFFIX}`;
     const space = spaceFor(project);
-    // The admin has no sign-in of their own, so only agents it acts as (name-agent) are recorded.
-    if (caller.admin && agent.endsWith(AGENT_SUFFIX)) ensureMember(space, agent);
+    // The admin may only act as an agent already linked to a signed-in GitHub person, so every agent maps to a real account.
+    if (caller.admin && !DASHBOARD_ROUTES.has(url.pathname) && !Object.values(space.members).some((member) => member.agent === agent)) {
+      throw httpError(403, `Agent "${agent}" is not linked to a GitHub account in ${project}. Sign in with GitHub (run agentstalk) and use your own key.`);
+    }
     // Recorded before any route answers, so even the dashboard's lightweight polls count as being present.
     const actor = DASHBOARD_ROUTES.has(url.pathname) ? (caller.admin ? undefined : caller.login) : agent;
     if (actor) touchPresence(space, actor);
@@ -488,12 +490,6 @@ function workOf(space, agent) {
   const task = space.tasks.find((candidate) => candidate.owner === agent && candidate.status === "doing");
   const locks = Object.values(space.locks).reduce((count, byBranch) => count + Object.values(byBranch).filter((lock) => lock.owner === agent).length, 0);
   return { doing: task ? `#${task.id} ${task.title}` : "", locks };
-}
-
-/** Adds an agent the admin acts as to the project's team, so it shows in the team panel like a signed-in one. */
-function ensureMember(space, agent) {
-  if (Object.values(space.members).some((member) => member.agent === agent)) return;
-  joinProject(space, agent.slice(0, -AGENT_SUFFIX.length), agent);
 }
 
 /** Adds a new task to the project's board in the first status column. */

@@ -34,7 +34,8 @@ test('tasks can be added and moved over HTTP, and a task being worked on cannot 
   };
 
   assert.equal((await call('/api/tasks', keys.alice, { title: '  ' })).status, 400, 'a task needs a title');
-  const added = await call('/api/tasks?as=human', keys.alice, { title: 'Write the docs' });
+  // The admin token cannot invent an agent: it may only act as one linked to a signed-in GitHub person.
+  assert.equal((await call('/api/tasks?project=team/project&agent=ghost-agent', 'admin-tasks-key', { title: 'x' })).status, 403);  const added = await call('/api/tasks?as=human', keys.alice, { title: 'Write the docs' });
   assert.equal(added.status, 200);
   const id = added.body.id;
   assert.equal(added.body.status, 'todo');
