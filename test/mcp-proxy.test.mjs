@@ -18,7 +18,7 @@ test('Codex stdio bridge authenticates with local Git settings and forwards tool
  const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  git('init','-q','--initial-branch=main');git('remote','add','origin','https://github.com/team/hackathon');
  const key=randomBytes(32).toString('hex');
- await fs.writeFile(path.join(data,'state.json'),JSON.stringify({projects:{},keys:{[createHash('sha256').update(key).digest('hex')]:{login:'friend',project:'team/hackathon'}}}));
+ await fs.writeFile(path.join(data,'state.json'),JSON.stringify({projects:{},keys:{[createHash('sha256').update(key).digest('hex')]:{login:'friend',project:'team/hackathon',createdAt:Date.now()}}}));
  const portServer=net.createServer();await new Promise(r=>portServer.listen(0,'127.0.0.1',r));const port=portServer.address().port;await new Promise(r=>portServer.close(r));
  const url=`http://127.0.0.1:${port}`;
  const child=spawn(process.execPath,[path.join(source,'server.mjs')],{env:{...process.env,PORT:String(port),AGENT_HUB_DATA_DIR:data,AGENT_HUB_TOKEN:''},stdio:'ignore'});

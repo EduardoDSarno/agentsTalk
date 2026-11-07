@@ -19,6 +19,7 @@ const GITHUB_API = "https://api.github.com";
 const WRITE_ROLES = ["admin", "maintain", "push"];
 const REPO_NAME_PATTERN = /^[\w.-]+\/[\w.-]+$/;
 const KEY_BYTES = 32;
+const KEY_TTL_MS = 30 * 24 * 60 * 60_000;
 const AGENT_SUFFIX = "-agent";
 const LOCK_TTL_MINUTES = 20;
 const LOCK_TTL_MS = LOCK_TTL_MINUTES * 60_000;
@@ -40,6 +41,7 @@ const MENTION_PATTERN = /@([a-z0-9_-]+)/gi;
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 // On a cloud host, point AGENT_HUB_DATA_DIR at a mounted disk so data survives redeploys.
 const STATE_FILE = path.join(process.env.AGENT_HUB_DATA_DIR ?? DIR, "state.json");
+const BACKUP_FILE = `${STATE_FILE}.backup`;
 const DASHBOARD_FILE = path.join(DIR, "dashboard.html");
 
 /** Every project's chat, locks, tasks and activity, keyed by project name. */
@@ -69,6 +71,23 @@ async function handleRequest(req, res) {
     if (req.method === "POST" && url.pathname === "/api/auth/github") return sendJson(res, 200, await signIn(await readJson(req)));
     const caller = authenticate(req);
     if (!caller) return sendJson(res, 401, { error: "Missing or unknown key. Run the agentsTalk setup in the repo to get yours." });
+    if (req.method === "POST" && url.pathname === "/api/admin/revoke") {
+      if (!caller.admin) throw httpError(403, "Admin access required");
+      const { project: targetProject, login: targetLogin } = await readJson(req);
+      if (!REPO_NAME_PATTERN.test(targetProject ?? "") || !/^[a-z0-9-]+$/i.test(targetLogin ?? "")) throw httpError(400, "Provide a GitHub repo and username");
+      let revoked = 0;
+      for (const [hash, record] of Object.entries(store.keys)) {
+        if (record.project === cleanProject(targetProject) && record.login === cleanName(targetLogin)) { delete store.keys[hash]; revoked++; }
+      }
+      if (revoked) {
+        saveStore();
+        const streams = wakeStreams.get(cleanProject(targetProject));
+        for (const name of [cleanName(targetLogin), `${cleanName(targetLogin)}${AGENT_SUFFIX}`]) {
+          for (const stream of streams?.get(name) ?? []) stream.end();
+        }
+      }
+      return sendJson(res, 200, { revoked });
+    }
     const project = caller.admin ? cleanProject(url.searchParams.get("project")) : caller.project;
     // Each person acts as their agent; the dashboard asks to act as the person.
     const asHuman = url.searchParams.get("as") === "human";
@@ -80,7 +99,7 @@ async function handleRequest(req, res) {
     if (req.method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, snapshot(space));
     if (req.method === "GET" && url.pathname === "/api/status") return sendText(res, statusText(space, project, agent));
     if (req.method === "GET" && url.pathname === "/api/inbox") return sendText(res, formatInbox(space, agent));
-    if (req.method === "GET" && url.pathname === "/api/wake") return openWakeStream(req, res, project, agent);
+    if (req.method === "GET" && url.pathname === "/api/wake") return openWakeStream(req, res, project, agent, caller.expiresAt);
     if (req.method === "POST" && url.pathname === "/api/chat") {
       const body = await readJson(req);
       return sendJson(res, 200, publicMessage(postChat(project, agent, body.text, asHuman)));
@@ -135,7 +154,8 @@ function authenticate(req) {
   if (!presented) return null;
   if (ADMIN_TOKEN && safeEqual(presented, ADMIN_TOKEN)) return { admin: true, login: "admin" };
   const record = store.keys[hashKey(presented)];
-  return record ? { admin: false, login: record.login, project: record.project } : null;
+  return record && Number.isFinite(record.createdAt) && Date.now() - record.createdAt < KEY_TTL_MS
+    ? { admin: false, login: record.login, project: record.project, expiresAt: record.createdAt + KEY_TTL_MS } : null;
 }
 
 /** Calls the GitHub API as the signed-in person and returns the JSON, or fails with GitHub's reason. */
@@ -261,7 +281,8 @@ function takeMentions(space, agent, humanOnly = false) {
 }
 
 /** Keeps a stream open for a Claude Code channel and sends any waiting mentions. */
-function openWakeStream(req, res, project, agent) {
+function openWakeStream(req, res, project, agent, expiresAt) {
+  res.agentsTalkExpiresAt = expiresAt;
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
   res.write(": connected\n\n");
   if (!wakeStreams.has(project)) wakeStreams.set(project, new Map());
@@ -276,6 +297,9 @@ function openWakeStream(req, res, project, agent) {
 function deliverWakeUps(project) {
   const space = spaceFor(project);
   for (const [agent, streams] of wakeStreams.get(project) ?? []) {
+    for (const stream of streams) {
+      if (stream.agentsTalkExpiresAt && Date.now() >= stream.agentsTalkExpiresAt) { streams.delete(stream); stream.end(); }
+    }
     if (!streams.size) continue;
     const mentions = takeMentions(space, agent, true);
     if (!mentions.length) continue;
@@ -299,10 +323,11 @@ function lockFiles(space, agent, branch, paths, reason = "") {
   const warnings = [];
   for (const raw of paths) {
     const file = normalizePath(raw);
-    const byBranch = (space.locks[file] ??= {});
+    const byBranch = (space.locks[file] ??= Object.create(null));
     const lock = byBranch[branch];
-    if (lock && lock.owner !== agent) {
-      blocked.push({ path: file, owner: lock.owner, reason: lock.reason, branch });
+    const conflict = Object.entries(byBranch).find(([otherBranch, other]) => other.owner !== agent && (otherBranch === branch || !branch || !otherBranch));
+    if (conflict) {
+      blocked.push({ path: file, owner: conflict[1].owner, reason: conflict[1].reason, branch: conflict[0] });
       continue;
     }
     if (!lock) {
@@ -329,7 +354,7 @@ function lockFiles(space, agent, branch, paths, reason = "") {
 function findBlocked(space, agent, branch, paths) {
   pruneExpiredLocks(space);
   return paths.map(normalizePath)
-    .map((file) => ({ file, lock: space.locks[file]?.[branch] }))
+    .map((file) => ({ file, lock: Object.entries(space.locks[file] ?? {}).find(([otherBranch, lock]) => lock.owner !== agent && (otherBranch === branch || !branch || !otherBranch))?.[1] }))
     .filter(({ lock }) => lock && lock.owner !== agent)
     .map(({ file, lock }) => ({ path: file, owner: lock.owner, reason: lock.reason, branch }));
 }
@@ -472,7 +497,7 @@ function spaceFor(project) {
 
 /** A new project's starting state. */
 function emptySpace() {
-  return { locks: {}, tasks: [], events: [], messages: [], notices: {}, members: {}, nextTaskId: 1, nextMessageId: 1 };
+  return { locks: Object.create(null), tasks: [], events: [], messages: [], notices: Object.create(null), members: Object.create(null), nextTaskId: 1, nextMessageId: 1 };
 }
 
 /**
@@ -544,13 +569,19 @@ function branchLabel(branch) {
 /** Keeps idle wake-up streams from being closed by proxies or the OS. */
 function sendHeartbeats() {
   for (const agents of wakeStreams.values()) {
-    for (const streams of agents.values()) for (const res of streams) res.write(": ping\n\n");
+    for (const streams of agents.values()) for (const res of streams) {
+      if (res.agentsTalkExpiresAt && Date.now() >= res.agentsTalkExpiresAt) res.end();
+      else res.write(": ping\n\n");
+    }
   }
 }
 
 /** Makes paths from different machines and agents comparable. */
 function normalizePath(raw) {
-  return raw.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  if (typeof raw !== "string" || raw.includes("\0")) throw httpError(400, "Invalid file path");
+  const file = path.posix.normalize(raw.trim().replace(/\\/g, "/"));
+  if (!file || file === "." || file === ".." || file.startsWith("../") || file.startsWith("/") || /^[a-z]:/i.test(file)) throw httpError(400, "File paths must be relative to the repository");
+  return file;
 }
 
 /** Makes names case-insensitive so "Ana" and "ana" are the same agent. */
@@ -605,14 +636,20 @@ function sendFile(res, file) {
  * move to the unnamed branch.
  */
 function loadStore() {
-  if (!fs.existsSync(STATE_FILE)) return { projects: {}, keys: {} };
-  const saved = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
-  const keys = saved.keys ?? {};
-  const projects = saved.projects ?? { [DEFAULT_PROJECT]: saved };
+  if (!fs.existsSync(STATE_FILE) && !fs.existsSync(BACKUP_FILE)) return { projects: Object.create(null), keys: Object.create(null) };
+  let saved;
+  try { saved = JSON.parse(fs.readFileSync(STATE_FILE, "utf8")); }
+  catch (error) {
+    if (!fs.existsSync(BACKUP_FILE)) throw error;
+    saved = JSON.parse(fs.readFileSync(BACKUP_FILE, "utf8"));
+    console.error("agentsTalk recovered state from backup; recent changes may be missing");
+  }
+  const keys = Object.assign(Object.create(null), saved.keys ?? {});
+  const projects = Object.assign(Object.create(null), saved.projects ?? { [DEFAULT_PROJECT]: saved });
   for (const [name, space] of Object.entries(projects)) {
-    projects[name] = { ...emptySpace(), ...space };
+    projects[name] = { ...emptySpace(), ...space, locks: Object.assign(Object.create(null), space.locks ?? {}), notices: Object.assign(Object.create(null), space.notices ?? {}), members: Object.assign(Object.create(null), space.members ?? {}) };
     for (const [file, lock] of Object.entries(projects[name].locks)) {
-      if ("owner" in lock) projects[name].locks[file] = { "": lock };
+      projects[name].locks[file] = Object.assign(Object.create(null), "owner" in lock ? { "": lock } : lock);
     }
   }
   return { projects, keys };
@@ -620,5 +657,16 @@ function loadStore() {
 
 /** Writes every project's state to disk after each change. */
 function saveStore() {
-  fs.writeFileSync(STATE_FILE, JSON.stringify(store, null, 2));
+  const temp = `${STATE_FILE}.${process.pid}.tmp`;
+  const backupTemp = `${BACKUP_FILE}.${process.pid}.tmp`;
+  try {
+    const fd = fs.openSync(temp, "w", 0o600);
+    try { fs.writeFileSync(fd, JSON.stringify(store, null, 2)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    fs.renameSync(temp, STATE_FILE);
+    fs.copyFileSync(STATE_FILE, backupTemp);
+    fs.renameSync(backupTemp, BACKUP_FILE);
+  } finally {
+    fs.rmSync(temp, { force: true });
+    fs.rmSync(backupTemp, { force: true });
+  }
 }

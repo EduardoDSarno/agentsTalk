@@ -92,6 +92,13 @@ the MCP URL and Authorization header printed after joining.
 Personal hub keys live in local Git config. The cached GitHub sign-in lives in
 `~/.agentstalk/github.json` with owner-only permissions. Never commit or share
 personal dashboard links or the credentials printed for manual MCP setup.
+Hub keys expire after 30 days; run `npx agentstalk@latest` in the repository to
+sign in again. If someone loses repository access, the hub administrator should
+revoke their keys immediately: POST to `/api/admin/revoke` with the admin token
+in the Authorization header and JSON `{"project":"owner/repo","login":"username"}`.
+Existing access is otherwise valid until expiry; GitHub access is checked again
+when the person signs in. Keep the Railway volume backed up: hub state is saved
+atomically with a recovery copy, but storage loss can still remove both copies.
 
 ### Use your own hub
 
