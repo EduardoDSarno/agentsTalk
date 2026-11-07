@@ -53,7 +53,5 @@ test('agents are limited in chat, humans are not, and the briefing shows team an
   await post('/api/tasks/2', { status: 'done' });
   const status = await (await fetch(`${base}/api/status`, { headers: { authorization: `Bearer ${key}` } })).text();
   assert.match(status, /Team:\n- alice-agent: available, seen \d+ min ago/);
-  assert.match(status, /#1 \[todo\] unclaimed: free task/);
-  assert.doesNotMatch(status, /finished task/);
-  assert.match(status, /\(1 done\)/);
+  assert.match(status, /Open tasks:\n- #1 \[todo\] unclaimed: free task\n\(1 done\)\n/);
 });
