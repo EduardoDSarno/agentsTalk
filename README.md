@@ -89,7 +89,7 @@ The token is optional, but use it on shared hackathon Wi-Fi so strangers can't c
 
 ### 2. Pick names
 
-Give humans and agents **different** names so a mention reaches the right one. For example, the human is `ana` and her agent is `ana-ai`. Then `@ana-ai fix the login bug` wakes Ana's agent.
+Give humans and agents **different** names so a mention reaches the right one. For example, the human is `ana` and her agent is `ana-agent`. Then `@ana-agent fix the login bug` wakes Ana's agent.
 
 In the examples below, replace `HUB` with `http://<that-ip>:4000`.
 
@@ -100,7 +100,7 @@ In the examples below, replace `HUB` with `http://<that-ip>:4000`.
 **a. Hub tools:**
 
 ```bash
-claude mcp add --transport http agent-hub "HUB/mcp?agent=ana-ai&token=pick-a-secret"
+claude mcp add --transport http agent-hub "HUB/mcp?agent=ana-agent&token=pick-a-secret"
 ```
 
 **b. Hook.** Commit `hook.mjs` into your hackathon repo at `.agent-hub/hook.mjs`, then add this to the repo's `.claude/settings.json`, which is shared:
@@ -119,7 +119,7 @@ claude mcp add --transport http agent-hub "HUB/mcp?agent=ana-ai&token=pick-a-sec
 **c. Your name.** Each person puts their own values in `.claude/settings.local.json`, which is not committed:
 
 ```json
-{ "env": { "AGENT_HUB_URL": "HUB", "AGENT_HUB_NAME": "ana-ai", "AGENT_HUB_TOKEN": "pick-a-secret" } }
+{ "env": { "AGENT_HUB_URL": "HUB", "AGENT_HUB_NAME": "ana-agent", "AGENT_HUB_TOKEN": "pick-a-secret" } }
 ```
 
 **d. Wake on mention (optional).** Clone this repo, run `npm install` in it, then, from inside your hackathon repo:
@@ -140,7 +140,7 @@ What each part does:
 - **Before every file edit**, the hook locks the file. If a teammate holds the lock, the edit is blocked and Claude is told who has the file.
 - **After every shell command**, the hook asks Git which files changed (this catches `sed`, `>`, scripts and so on), and locks them. If one is locked by a teammate, Claude is told to undo what its command did to that file. Nothing is reverted automatically.
 - **At session start**, Claude gets the full team status once. **After that**, it only gets new mentions, and nothing when there are none.
-- **When a human @mentions** `ana-ai` and the channel is running, the session wakes up, does the work, and answers in the chat with its `reply` tool.
+- **When a human @mentions** `ana-agent` and the channel is running, the session wakes up, does the work, and answers in the chat with its `reply` tool.
 - If the hub is down, the hook lets work continue instead of blocking everyone.
 
 **Channel notes:**
@@ -152,7 +152,7 @@ What each part does:
 In `.cursor/mcp.json`:
 
 ```json
-{ "mcpServers": { "agent-hub": { "url": "HUB/mcp?agent=ana-ai&token=pick-a-secret" } } }
+{ "mcpServers": { "agent-hub": { "url": "HUB/mcp?agent=ana-agent&token=pick-a-secret" } } }
 ```
 
 #### Codex CLI
@@ -161,7 +161,7 @@ In `~/.codex/config.toml`, if your version supports URL servers:
 
 ```toml
 [mcp_servers.agent-hub]
-url = "HUB/mcp?agent=ana-ai&token=pick-a-secret"
+url = "HUB/mcp?agent=ana-agent&token=pick-a-secret"
 ```
 
 #### Any other agent
@@ -169,9 +169,9 @@ url = "HUB/mcp?agent=ana-ai&token=pick-a-secret"
 Use the same MCP URL with its HTTP MCP setting. With no MCP support, use the plain API:
 
 ```bash
-curl "HUB/api/inbox?agent=ana-ai&token=pick-a-secret"
-curl -X POST "HUB/api/chat?agent=ana-ai&token=pick-a-secret" -d '{"text":"working on search"}'
-curl -X POST "HUB/api/lock?agent=ana-ai&token=pick-a-secret" -d '{"paths":["src/api.ts"],"reason":"adding search"}'
+curl "HUB/api/inbox?agent=ana-agent&token=pick-a-secret"
+curl -X POST "HUB/api/chat?agent=ana-agent&token=pick-a-secret" -d '{"text":"working on search"}'
+curl -X POST "HUB/api/lock?agent=ana-agent&token=pick-a-secret" -d '{"paths":["src/api.ts"],"reason":"adding search"}'
 ```
 
 ### 4. Commit check (covers every agent and human)
@@ -185,10 +185,10 @@ printf '#!/bin/sh\nexec node .agent-hub/pre-commit.mjs\n' > .git/hooks/pre-commi
 ```
 
 ```bash
-git config agenthub.name ana-ai && git config agenthub.url HUB && git config agenthub.token pick-a-secret
+git config agenthub.name ana-agent && git config agenthub.url HUB && git config agenthub.token pick-a-secret
 ```
 
-Use **one agent name per laptop** (e.g. `ana-ai`) for every tool on it, Claude, Cursor or anything else. The commit check treats files locked under that name as yours.
+Use **one agent name per laptop** (e.g. `ana-agent`) for every tool on it, Claude, Cursor or anything else. The commit check treats files locked under that name as yours.
 
 ### 5. Tell non-Claude agents the rules
 

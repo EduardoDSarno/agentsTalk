@@ -9,7 +9,7 @@ import { build } from "esbuild";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const KIT_FOLDER = ".agent-hub";
-const AGENT_SUFFIX = "-ai";
+const AGENT_SUFFIX = "-agent";
 const DEFAULT_TEAM = "eduardo,victor,ratinder";
 const HOOK_COMMAND = `node "$CLAUDE_PROJECT_DIR/${KIT_FOLDER}/hook.mjs"`;
 const HOOK_EVENTS = {
