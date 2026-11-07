@@ -25,7 +25,7 @@ async function main() {
   try {
     const blocked = await findBlocked(name, staged);
     if (!blocked.length) return;
-    console.error("Commit refused: these files are locked by a teammate on the agent hub:");
+    console.error("Commit refused: these files are locked by a teammate on agentsTalk:");
     for (const b of blocked) console.error(`  ${b.path} (${b.owner}${b.reason ? `: ${b.reason}` : ""})`);
     console.error("Unstage them (git restore --staged <file>) and undo your changes, or ask the owner in the team chat.");
     process.exit(REFUSE_EXIT_CODE);

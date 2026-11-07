@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/agenttalk/hook.mjs\""
+            "command": "node \"$CLAUDE_PROJECT_DIR/agentstalk/hook.mjs\""
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/agenttalk/hook.mjs\""
+            "command": "node \"$CLAUDE_PROJECT_DIR/agentstalk/hook.mjs\""
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/agenttalk/hook.mjs\""
+            "command": "node \"$CLAUDE_PROJECT_DIR/agentstalk/hook.mjs\""
           }
         ]
       }
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/agenttalk/hook.mjs\""
+            "command": "node \"$CLAUDE_PROJECT_DIR/agentstalk/hook.mjs\""
           }
         ]
       }

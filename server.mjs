@@ -37,7 +37,7 @@ const store = loadStore();
 const wakeStreams = new Map();
 
 http.createServer(handleRequest).listen(PORT, () => {
-  console.log(`Agent hub running: dashboard at http://localhost:${PORT}/  MCP at http://localhost:${PORT}/mcp?project=<repo>&agent=<name>`);
+  console.log(`agentsTalk running: dashboard at http://localhost:${PORT}/  MCP at http://localhost:${PORT}/mcp?project=<repo>&agent=<name>`);
 });
 setInterval(sendHeartbeats, HEARTBEAT_MS);
 
@@ -322,7 +322,7 @@ function updateTask(space, agent, id, status, note) {
 function statusText(space, project, agent) {
   const { locks, tasks, events } = snapshot(space);
   const lines = [
-    `TEAM AGENT HUB — project "${project}", you are "${agent}".`,
+    `agentsTalk team hub — project "${project}", you are "${agent}".`,
     "Rules: lock files before editing; never edit a file locked by someone else; unlock after you push. Post one short line with `say` when you start something; @name addresses someone.",
     "",
     "File locks:",

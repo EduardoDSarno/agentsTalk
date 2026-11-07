@@ -1,5 +1,5 @@
 {
-  "name": "agenttalk-kit",
+  "name": "agentstalk-kit",
   "private": true,
   "type": "module",
   "main": "join.mjs"

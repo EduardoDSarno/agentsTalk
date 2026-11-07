@@ -1,4 +1,4 @@
-# Agent Hub
+# agentsTalk
 
 A small shared server for a team of humans and AI agents working on one repo:
 
@@ -40,7 +40,7 @@ npm install
 node install-kit.mjs ../team-repo --hub https://<your-domain> --token <your-secret>
 ```
 
-It adds an `agenttalk/` folder (hook, commit check, wake-up channel bundled into one file, join script and team settings), the Claude Code hook settings in `.claude/settings.json`, and the coordination rules in `AGENTS.md`. Use `--team a,b,c` to change the team names (the default is eduardo, victor, ratinder). Running it again is safe.
+It adds an `agentstalk/` folder (hook, commit check, wake-up channel bundled into one file, join script and team settings), the Claude Code hook settings in `.claude/settings.json`, and the coordination rules in `AGENTS.md`. Use `--team a,b,c` to change the team names (the default is eduardo, victor, ratinder). Running it again is safe.
 
 Commit and push those files. **Keep the team repo private**, because it holds the team token.
 
@@ -51,7 +51,7 @@ git clone <team-repo> && cd <team-repo>
 ```
 
 ```bash
-node agenttalk
+node agentstalk
 ```
 
 Pick your name from the list. The script then:
@@ -70,7 +70,7 @@ claude --dangerously-load-development-channels server:agent-hub-chat
 
 Each repo is its own **project** on the hub, with its own chat, locks, tasks and activity, so `src/api.ts` in one repo never blocks `src/api.ts` in another. To add a repo, run step 2 on it. The installer names the project after the GitHub repo (or the folder), and `--project <name>` picks another name.
 
-Teammates run `join.mjs` once in each repo they work in. The dashboard's project menu, next to the Agent Hub name, switches between repos, and the join script's dashboard link opens the right one.
+Teammates run `join.mjs` once in each repo they work in. The dashboard's project menu, next to the agentsTalk name, switches between repos, and the join script's dashboard link opens the right one.
 
 Data from before projects existed is kept in a project called `default`.
 
@@ -120,15 +120,15 @@ In the examples below, replace `HUB` with `http://<that-ip>:4000`.
 claude mcp add --transport http agent-hub "HUB/mcp?agent=ana-agent&token=pick-a-secret"
 ```
 
-**b. Hook.** Commit `hook.mjs` into your hackathon repo at `agenttalk/hook.mjs`, then add this to the repo's `.claude/settings.json`, which is shared:
+**b. Hook.** Commit `hook.mjs` into your hackathon repo at `agentstalk/hook.mjs`, then add this to the repo's `.claude/settings.json`, which is shared:
 
 ```json
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agenttalk/hook.mjs\"" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agenttalk/hook.mjs\"" }] }],
-    "PreToolUse": [{ "matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agenttalk/hook.mjs\"" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agenttalk/hook.mjs\"" }] }]
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agentstalk/hook.mjs\"" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agentstalk/hook.mjs\"" }] }],
+    "PreToolUse": [{ "matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agentstalk/hook.mjs\"" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agentstalk/hook.mjs\"" }] }]
   }
 }
 ```
@@ -195,10 +195,10 @@ curl -X POST "HUB/api/lock?agent=ana-agent&token=pick-a-secret" -d '{"paths":["s
 
 A Git pre-commit hook refuses commits that include files a teammate has locked. It runs for every commit in that clone, whether Claude, Cursor, Codex or a human makes it.
 
-Commit `pre-commit.mjs` into the hackathon repo at `agenttalk/pre-commit.mjs`. Then each person runs this once in their clone:
+Commit `pre-commit.mjs` into the hackathon repo at `agentstalk/pre-commit.mjs`. Then each person runs this once in their clone:
 
 ```bash
-printf '#!/bin/sh\nexec node agenttalk/pre-commit.mjs\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+printf '#!/bin/sh\nexec node agentstalk/pre-commit.mjs\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 ```
 
 ```bash

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// One-time setup for a teammate: run `node agenttalk` inside your clone of the team repo.
+// One-time setup for a teammate: run `node agentstalk` inside your clone of the team repo.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
