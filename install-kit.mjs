@@ -78,6 +78,7 @@ export async function installKit(repo, hubUrl, { showNextSteps = true } = {}) {
   }
   writeJson(path.join(kit, "config.json"), { hubUrl, repo: githubRepo });
   addHookSettings(path.join(repo, ".claude", "settings.json"));
+  addClaudeMcp(path.join(repo, ".mcp.json"));
   addCodexConfig(path.join(repo, ".codex", "config.toml"));
   addRules(path.join(repo, "AGENTS.md"));
 
@@ -86,6 +87,18 @@ export async function installKit(repo, hubUrl, { showNextSteps = true } = {}) {
     console.log("Next: commit and push it. The kit has no secrets, so the repo can be public.");
     console.log(`Teammates with write access then clone the repo and run: node ${KIT_FOLDER}`);
   }
+}
+
+/** Share Claude's connection without storing any personal credential in the repo. */
+function addClaudeMcp(file) {
+  const settings = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+  settings.mcpServers ??= {};
+  if (Object.hasOwn(settings.mcpServers, "agent-hub")) {
+    console.log("Existing Claude agent-hub project configuration preserved.");
+    return;
+  }
+  settings.mcpServers["agent-hub"] = { type: "stdio", command: "node", args: [`${KIT_FOLDER}/mcp-proxy.mjs`] };
+  writeJson(file, settings);
 }
 
 /** Reads "owner/name" from the repo's GitHub remote; the hub names the project after it. */

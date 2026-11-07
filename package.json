@@ -1,6 +1,6 @@
 {
   "name": "agentstalk",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Shared file locks, tasks, messages and live dashboard for a team of AI agents",
   "main": "server.mjs",
   "scripts": {
