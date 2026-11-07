@@ -41,6 +41,13 @@ const RULES = `${RULES_MARKER}
 - After you commit and push, call \`unlock_files\`.
 - Never use \`git commit --no-verify\`: it skips the team's lock check.
 `;
+const CLAUDE_RULES = `${RULES_MARKER}
+- Before starting a task, call the agentsTalk agent-hub \`status\` tool and check the team's work.
+- Before editing a file, use \`lock_files\` with its repository-relative path. Do not edit files reported as blocked.
+- Use \`say\` for short start and finish updates, and \`update_task\` when working on a shared task. Release your locks after committing and pushing.
+- If agent-hub tools are unavailable, tell the user to run \`npx agentstalk@latest --agent claude\` in this repository, then restart Claude Code and approve the project MCP server if prompted. Do not claim that the hub is connected until it is available.
+- Do not bypass the team's pre-commit lock check with \`git commit --no-verify\`.
+`;
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
 
@@ -78,14 +85,28 @@ export async function installKit(repo, hubUrl, { showNextSteps = true } = {}) {
   }
   writeJson(path.join(kit, "config.json"), { hubUrl, repo: githubRepo });
   addHookSettings(path.join(repo, ".claude", "settings.json"));
+  addClaudeMcp(path.join(repo, ".mcp.json"));
   addCodexConfig(path.join(repo, ".codex", "config.toml"));
   addRules(path.join(repo, "AGENTS.md"));
+  addRules(path.join(repo, "CLAUDE.md"), CLAUDE_RULES);
 
   console.log(`Kit installed in ${path.resolve(repo)} for ${githubRepo ?? "a repo without a GitHub remote yet"}.`);
   if (showNextSteps) {
     console.log("Next: commit and push it. The kit has no secrets, so the repo can be public.");
     console.log(`Teammates with write access then clone the repo and run: node ${KIT_FOLDER}`);
   }
+}
+
+/** Share Claude's connection without storing any personal credential in the repo. */
+function addClaudeMcp(file) {
+  const settings = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+  settings.mcpServers ??= {};
+  if (Object.hasOwn(settings.mcpServers, "agent-hub")) {
+    console.log("Existing Claude agent-hub project configuration preserved.");
+    return;
+  }
+  settings.mcpServers["agent-hub"] = { type: "stdio", command: "node", args: [`${KIT_FOLDER}/mcp-proxy.mjs`] };
+  writeJson(file, settings);
 }
 
 /** Reads "owner/name" from the repo's GitHub remote; the hub names the project after it. */
@@ -175,10 +196,10 @@ function addCodexConfig(file) {
 }
 
 /** Appends the coordination rules to AGENTS.md unless they are already there. */
-function addRules(file) {
+function addRules(file, rules = RULES) {
   const current = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
   if (current.includes(RULES_MARKER)) return;
-  fs.writeFileSync(file, `${current}${current && !current.endsWith("\n") ? "\n" : ""}${current ? "\n" : ""}${RULES}`);
+  fs.writeFileSync(file, `${current}${current && !current.endsWith("\n") ? "\n" : ""}${current ? "\n" : ""}${rules}`);
 }
 
 /** Writes pretty-printed JSON, creating the folder if needed. */

@@ -13,6 +13,7 @@ const KIT_FOLDER = path.basename(KIT_DIR);
 const CONFIG = JSON.parse(fs.readFileSync(path.join(KIT_DIR, "config.json"), "utf8"));
 const HUB_URL = CONFIG.hubUrl.replace(/\/$/, "");
 const CHANNEL_FILE = path.join(KIT_DIR, "channel.mjs");
+const MCP_PROXY_FILE = path.join(KIT_DIR, "mcp-proxy.mjs");
 const PRE_COMMIT_MARKER = "agent-hub";
 const PRE_COMMIT_SCRIPT = `#!/bin/sh\n# ${PRE_COMMIT_MARKER}: refuse commits of files a teammate has locked\nexec node "$(git rev-parse --show-toplevel)/${KIT_FOLDER}/pre-commit.mjs"\n`;
 // Per-person files shared by every repo this person joins.
@@ -61,6 +62,7 @@ async function main() {
 
   installPreCommit(root);
   const claudeReady = ["auto", "claude"].includes(values.agent) && connectClaudeCode(root, key);
+  if (values.agent === "claude" && !claudeReady) console.log("! Claude Code was not found. Install it, then run npx agentstalk@latest --agent claude again.");
   const codexReady = ["auto", "codex"].includes(values.agent) && connectCodex(root, values.agent === "codex");
   const commandReady = !values["no-command"] && installCommand();
   printNextSteps(login, agent, key, { claudeReady, codexReady, commandReady });
@@ -141,9 +143,9 @@ function installPreCommit(root) {
 function connectClaudeCode(root, key) {
   if (!commandExists("claude")) return false;
   for (const name of ["agent-hub", "agent-hub-chat"]) claude(["mcp", "remove", name, "-s", "local"], root, true);
-  claude(["mcp", "add", "--transport", "http", "-s", "local", "agent-hub", `${HUB_URL}/mcp`, "--header", `Authorization: Bearer ${key}`], root);
+  claude(["mcp", "add", "--transport", "stdio", "-s", "local", "agent-hub", "--", "node", MCP_PROXY_FILE], root);
   claude(["mcp", "add", "agent-hub-chat", "-s", "local", "-e", `AGENT_HUB_URL=${HUB_URL}`, "-e", `AGENT_HUB_KEY=${key}`, "--", "node", CHANNEL_FILE], root);
-  console.log("✓ Claude Code connected: team tools, automatic file locks and wake-up channel");
+  console.log("✓ Claude Code configured: team tools, automatic file locks and wake-up channel");
   return true;
 }
 
@@ -209,6 +211,7 @@ function printNextSteps(login, agent, key, { claudeReady, codexReady, commandRea
   if (claudeReady) {
     console.log(commandReady ? `Start working: type ${COMMAND_NAME} in this repo.` : `Start Claude with: claude ${CHANNEL_FLAG}`);
     console.log("It starts Claude Code so teammates can wake it with @mentions.");
+    console.log("If Claude was already running, restart its session so it loads the connection.");
     console.log("(First time: pick \"I am using this for local development\".)\n");
   }
   if (codexReady) {

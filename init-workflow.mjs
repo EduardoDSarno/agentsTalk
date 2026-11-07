@@ -8,7 +8,7 @@ export const SETUP_FILES = [
   'agentstalk/channel.mjs', 'agentstalk/config.json', 'agentstalk/github-repo.mjs',
   'agentstalk/hook.mjs', 'agentstalk/join.mjs', 'agentstalk/mcp-proxy.mjs',
   'agentstalk/package.json', 'agentstalk/pre-commit.mjs',
-  'AGENTS.md', '.claude/settings.json', '.codex/config.toml',
+  'AGENTS.md', 'CLAUDE.md', '.claude/settings.json', '.codex/config.toml', '.mcp.json',
 ];
 
 function git(root, ...args) {

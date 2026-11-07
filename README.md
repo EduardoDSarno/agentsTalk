@@ -80,7 +80,11 @@ npx agentstalk --agent claude
 Use `--agent none` for dashboard access or manual MCP setup. Other agents can use
 the MCP URL and Authorization header printed after joining.
 
-- **Claude Code:** setup connects the hub tools and wake-up channel. Start Claude
+- **Claude Code:** setup connects the hub tools and wake-up channel, and adds a
+  shared `.mcp.json` connection that reads each person's key from their local
+  Git config. Setup also adds shared instructions to `CLAUDE.md`, preserving
+  any existing content. Approve the project server if Claude asks. Restart an existing
+  session after setup so it loads the connection. Start Claude
   using the channel flag printed by setup to receive human @mentions while idle.
   Edit hooks automatically acquire locks.
 - **Codex:** setup adds a project MCP configuration without embedding credentials.
