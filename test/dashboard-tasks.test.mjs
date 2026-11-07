@@ -29,9 +29,22 @@ const task = (id, status, owner = '') => ({id, title: `Task ${id}`, status, owne
 
 test('Board groups blocked work and offers ownership-aware actions', () => {
   const b = board([task(1, 'todo'), task(2, 'doing', 'bob-agent'), task(3, 'blocked', 'alice'), task(4, 'done', 'bob-agent')]);
-  const view = b.element('tasks').innerHTML;
-  for (const text of ['Blocked', 'Claim task #1', 'Resume task #3', 'Done task #3', 'Release task #3', 'Reopen task #4']) assert.ok(view.includes(text), text);
-  assert.ok(!view.includes('data-task-id="2"'));
+  assert.ok(b.element('tasks').innerHTML.includes('Blocked'));
+  // Actions appear when a task is opened; clicking a task row toggles it.
+  const openActions = (id) => {
+    b.element('tasks').listeners.click({ target: { closest: (selector) => (selector === '[data-task-toggle]' ? { dataset: { taskToggle: String(id) } } : null) } });
+    return b.element('tasks').innerHTML;
+  };
+  for (const [id, labels] of [[1, ['Claim task #1']], [3, ['Resume task #3', 'Done task #3', 'Release task #3']], [4, ['Reopen task #4']]]) {
+    const view = openActions(id);
+    for (const text of labels) assert.ok(view.includes(text), text);
+  }
+  const held = openActions(2);
+  assert.ok(!held.includes('data-task-id="2"'));
+  assert.match(held, /Held by bob-agent/);
+  assert.equal(b.run('openTaskId'), 2);
+  assert.equal(openActions(2).includes('data-task-id="2"'), false);
+  assert.equal(b.run('openTaskId'), null, 'clicking the opened task closes it');
   assert.equal(b.element('task-add').disabled, false);
 });
 
@@ -72,6 +85,7 @@ test('409 displays the server error without going offline or losing draft notes'
 
 test('Unchanged polls preserve note DOM and changed polls keep draft values', () => {
   const b = board([task(1, 'todo')]);
+  b.run('openTaskId = 1; taskRenderKey = ""; renderTasks(lastTasks)');
   b.element('tasks').innerHTML = 'existing focused DOM';
   b.run('renderTasks(lastTasks)');
   assert.equal(b.element('tasks').innerHTML, 'existing focused DOM');
