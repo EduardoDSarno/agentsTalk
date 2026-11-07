@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 // Claude Code hook for the agent hub. No dependencies: copy it into your project.
-import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -8,9 +7,8 @@ const DEFAULT_HUB_URL = "http://localhost:4000";
 // Settings come from the environment, or from this clone's `git config agenthub.*` written by join.mjs.
 const GIT_SETTINGS = readGitSettings(process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
 const HUB_URL = (process.env.AGENT_HUB_URL ?? GIT_SETTINGS.url ?? DEFAULT_HUB_URL).replace(/\/$/, "");
-const AGENT = process.env.AGENT_HUB_NAME ?? GIT_SETTINGS.name ?? os.userInfo().username;
-const TOKEN = process.env.AGENT_HUB_TOKEN ?? GIT_SETTINGS.token ?? "";
-const PROJECT = process.env.AGENT_HUB_PROJECT ?? GIT_SETTINGS.project ?? "";
+// The personal key from the setup; the hub knows the person and project from it.
+const KEY = process.env.AGENT_HUB_KEY ?? GIT_SETTINGS.key ?? "";
 // Read on every run, so switching branches is picked up right away.
 const BRANCH = currentBranch(process.env.CLAUDE_PROJECT_DIR ?? process.cwd());
 const HUB_TIMEOUT_MS = 3000;
@@ -18,8 +16,8 @@ const BLOCK_EXIT_CODE = 2;
 const LOCK_REASON = "editing with Claude Code";
 const SHELL_LOCK_REASON = "changed by a shell command";
 const RENAME_OR_COPY = /[RC]/;
-// Set up means the setup script saved a name for this clone (or one is given in the environment).
-const JOINED = Boolean(process.env.AGENT_HUB_NAME ?? GIT_SETTINGS.name);
+// Set up means the setup script saved a personal key for this clone.
+const JOINED = Boolean(KEY);
 const NOT_JOINED_NOTICE = "agentsTalk (the team's shared chat, file locks and tasks) isn't set up in this clone yet. " +
   "At a good moment, tell the user once: run `node agentstalk` in a terminal in this repo; it signs them in with GitHub. " +
   "Afterwards they start Claude with the `agentstalk` command so teammates can reach this session.";
@@ -110,12 +108,11 @@ function changedFiles(root) {
   return files;
 }
 
-/** Calls the hub API as this agent and returns the response body as text. */
+/** Calls the hub API as this agent, with the personal key in a header, and returns the response body as text. */
 async function hub(method, route, body) {
-  const url = `${HUB_URL}${route}?project=${encodeURIComponent(PROJECT)}&branch=${encodeURIComponent(BRANCH)}&agent=${encodeURIComponent(AGENT)}&token=${encodeURIComponent(TOKEN)}`;
-  const response = await fetch(url, {
+  const response = await fetch(`${HUB_URL}${route}?branch=${encodeURIComponent(BRANCH)}`, {
     method,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${KEY}` },
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(HUB_TIMEOUT_MS),
   });

@@ -7256,9 +7256,6 @@ var require_dist = __commonJS({
   }
 });
 
-// channel.mjs
-import os from "node:os";
-
 // node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
@@ -17046,9 +17043,7 @@ var StdioServerTransport = class {
 // channel.mjs
 var DEFAULT_HUB_URL = "http://localhost:4000";
 var HUB_URL = (process.env.AGENT_HUB_URL ?? DEFAULT_HUB_URL).replace(/\/$/, "");
-var AGENT = (process.env.AGENT_HUB_NAME ?? os.userInfo().username).toLowerCase();
-var TOKEN = process.env.AGENT_HUB_TOKEN ?? "";
-var PROJECT = process.env.AGENT_HUB_PROJECT ?? "";
+var KEY = process.env.AGENT_HUB_KEY ?? "";
 var RECONNECT_DELAY_MS = 5e3;
 var EVENT_SEPARATOR = "\n\n";
 var DATA_PREFIX = "data: ";
@@ -17056,7 +17051,7 @@ var mcp = new Server(
   { name: "agent-hub-chat", version: "1.0.0" },
   {
     capabilities: { experimental: { "claude/channel": {} }, tools: {} },
-    instructions: `You are "${AGENT}" in a team of humans and AI agents. Messages from the team chat arrive as <channel source="agent-hub-chat" from="..." message_id="...">: a teammate @mentioned you. Do what they ask, following the team rules (lock files before editing, never edit files locked by others). Use the reply tool to answer in the chat: one or two short lines, when you start a bigger job and when you finish or need an answer. Don't reply only to acknowledge small requests.`
+    instructions: `You are this person's agent in a team of humans and AI agents. Messages from the team chat arrive as <channel source="agent-hub-chat" from="..." message_id="...">: a teammate @mentioned you. Do what they ask, following the team rules (lock files before editing, never edit files locked by others). Use the reply tool to answer in the chat: one or two short lines, when you start a bigger job and when you finish or need an answer. Don't reply only to acknowledge small requests.`
   }
 );
 mcp.setRequestHandler(ListToolsRequestSchema, listTools);
@@ -17074,7 +17069,7 @@ async function listenForMentions() {
   }
 }
 async function readWakeStream() {
-  const response = await fetch(hubUrl("/api/wake"));
+  const response = await fetch(`${HUB_URL}/api/wake`, { headers: authHeader() });
   if (!response.ok) throw new Error(`hub answered ${response.status}`);
   const decoder = new TextDecoder();
   let buffer = "";
@@ -17109,14 +17104,14 @@ async function listTools() {
 }
 async function callTool(request) {
   if (request.params.name !== "reply") throw new Error(`unknown tool: ${request.params.name}`);
-  const response = await fetch(hubUrl("/api/chat"), {
+  const response = await fetch(`${HUB_URL}/api/chat`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...authHeader() },
     body: JSON.stringify({ text: request.params.arguments?.text })
   });
   if (!response.ok) throw new Error(`hub answered ${response.status}`);
   return { content: [{ type: "text", text: "sent" }] };
 }
-function hubUrl(route) {
-  return `${HUB_URL}${route}?project=${encodeURIComponent(PROJECT)}&agent=${encodeURIComponent(AGENT)}&token=${encodeURIComponent(TOKEN)}`;
+function authHeader() {
+  return { authorization: `Bearer ${KEY}` };
 }

@@ -1,15 +1,13 @@
 #!/usr/bin/env node
 // Claude Code channel: wakes an idle Claude Code session when a human @mentions its agent in the hub chat.
-import os from "node:os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const DEFAULT_HUB_URL = "http://localhost:4000";
 const HUB_URL = (process.env.AGENT_HUB_URL ?? DEFAULT_HUB_URL).replace(/\/$/, "");
-const AGENT = (process.env.AGENT_HUB_NAME ?? os.userInfo().username).toLowerCase();
-const TOKEN = process.env.AGENT_HUB_TOKEN ?? "";
-const PROJECT = process.env.AGENT_HUB_PROJECT ?? "";
+// The personal key from the setup; the hub knows the person and project from it.
+const KEY = process.env.AGENT_HUB_KEY ?? "";
 const RECONNECT_DELAY_MS = 5000;
 const EVENT_SEPARATOR = "\n\n";
 const DATA_PREFIX = "data: ";
@@ -19,7 +17,7 @@ const mcp = new Server(
   {
     capabilities: { experimental: { "claude/channel": {} }, tools: {} },
     instructions:
-      `You are "${AGENT}" in a team of humans and AI agents. Messages from the team chat arrive as ` +
+      "You are this person's agent in a team of humans and AI agents. Messages from the team chat arrive as " +
       `<channel source="agent-hub-chat" from="..." message_id="...">: a teammate @mentioned you. ` +
       "Do what they ask, following the team rules (lock files before editing, never edit files locked by others). " +
       "Use the reply tool to answer in the chat: one or two short lines, when you start a bigger job and when you finish or need an answer. " +
@@ -49,7 +47,7 @@ async function listenForMentions() {
 
 /** Reads server-sent events from the hub and forwards each batch of mentions to Claude. */
 async function readWakeStream() {
-  const response = await fetch(hubUrl("/api/wake"));
+  const response = await fetch(`${HUB_URL}/api/wake`, { headers: authHeader() });
   if (!response.ok) throw new Error(`hub answered ${response.status}`);
   const decoder = new TextDecoder();
   let buffer = "";
@@ -90,16 +88,16 @@ async function listTools() {
 /** Posts Claude's reply to the hub chat as this agent. */
 async function callTool(request) {
   if (request.params.name !== "reply") throw new Error(`unknown tool: ${request.params.name}`);
-  const response = await fetch(hubUrl("/api/chat"), {
+  const response = await fetch(`${HUB_URL}/api/chat`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...authHeader() },
     body: JSON.stringify({ text: request.params.arguments?.text }),
   });
   if (!response.ok) throw new Error(`hub answered ${response.status}`);
   return { content: [{ type: "text", text: "sent" }] };
 }
 
-/** Builds a hub URL that identifies this agent and carries the team token. */
-function hubUrl(route) {
-  return `${HUB_URL}${route}?project=${encodeURIComponent(PROJECT)}&agent=${encodeURIComponent(AGENT)}&token=${encodeURIComponent(TOKEN)}`;
+/** The header that carries this person's key; keys never go in URLs. */
+function authHeader() {
+  return { authorization: `Bearer ${KEY}` };
 }

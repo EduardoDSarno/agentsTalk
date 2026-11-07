@@ -12,18 +12,18 @@ await main();
  * Refuses a commit that includes files a teammate has locked on the hub.
  * It runs for every commit in this clone, whichever agent or human makes it,
  * so it also covers tools that don't get the Claude Code hook. If the hub is
- * unreachable or no name is set, the commit goes through with a warning.
+ * unreachable or this clone isn't set up, the commit goes through with a warning.
  */
 async function main() {
   const staged = git("diff", "--cached", "--name-only", "-z").split("\0").filter(Boolean);
   if (!staged.length) return;
-  const name = setting("AGENT_HUB_NAME", "name");
-  if (!name) {
-    console.error("agent-hub: no name set (git config agenthub.name <name>); committing without the lock check");
+  const key = setting("AGENT_HUB_KEY", "key");
+  if (!key) {
+    console.error("agentsTalk: this clone isn't set up (run: node agentstalk); committing without the lock check");
     return;
   }
   try {
-    const blocked = await findBlocked(name, staged);
+    const blocked = await findBlocked(key, staged);
     if (!blocked.length) return;
     console.error("Commit refused: these files are locked by a teammate on agentsTalk:");
     for (const b of blocked) console.error(`  ${b.path} (${b.owner}${b.reason ? `: ${b.reason}` : ""})`);
@@ -34,17 +34,14 @@ async function main() {
   }
 }
 
-/** Asks the hub which of these files someone else has locked. */
-async function findBlocked(name, paths) {
+/** Asks the hub which of these files someone else has locked; the personal key tells it who and which repo. */
+async function findBlocked(key, paths) {
   const hubUrl = setting("AGENT_HUB_URL", "url") || DEFAULT_HUB_URL;
-  const token = setting("AGENT_HUB_TOKEN", "token");
-  const project = setting("AGENT_HUB_PROJECT", "project");
   // Only locks on the branch being committed to count; other branches meet at merge time.
   const branch = git("branch", "--show-current").trim();
-  const url = `${hubUrl.replace(/\/$/, "")}/api/check?project=${encodeURIComponent(project)}&branch=${encodeURIComponent(branch)}&agent=${encodeURIComponent(name)}&token=${encodeURIComponent(token)}`;
-  const response = await fetch(url, {
+  const response = await fetch(`${hubUrl.replace(/\/$/, "")}/api/check?branch=${encodeURIComponent(branch)}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
     body: JSON.stringify({ paths }),
     signal: AbortSignal.timeout(HUB_TIMEOUT_MS),
   });

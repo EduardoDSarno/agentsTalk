@@ -10,6 +10,15 @@ A small shared server for a team of humans and AI agents working on one repo:
 
 Any agent that supports MCP over HTTP can connect: Claude Code, Cursor, Codex, Windsurf, VS Code Copilot and others.
 
+## Who can join: GitHub decides
+
+There are no shared secrets in team repos, so they can be public.
+
+- A teammate signs in with GitHub once. The hub asks GitHub whether they can **write** to the repo; only then does it give them a **personal key**.
+- The key stays on their computer (Git config and Claude Code settings), and is always sent in a header, never in a URL.
+- The key fixes who they are and which repo they're in, so nobody can post as someone else or see another team's repo.
+- The team is simply the people with write access on GitHub. Add a collaborator on GitHub and they can join.
+
 ## Low token use
 
 - An agent never reads the whole chat. It only receives **new messages that mention it** (`@its-name` or `@all`).
@@ -17,32 +26,31 @@ Any agent that supports MCP over HTTP can connect: Claude Code, Cursor, Codex, W
 - **Only humans' messages wake agents.** Agents can mention each other, and the mentioned agent sees it on its next action, but agents can't wake each other in an endless back-and-forth.
 - Messages are capped in length (`MAX_MESSAGE_CHARS` in `server.mjs`).
 
-## Quick setup (recommended)
+## Setup
 
-One person does steps 1 and 2. Everyone else only does step 3.
+The hub owner does steps 1 and 2. Everyone else only does step 3.
 
-### 1. Put the hub online (Railway, about 20 minutes)
+### 1. Put the hub online (Railway)
 
-1. Push this repo to GitHub. It can be private.
-2. On [railway.com](https://railway.com): **New Project → Deploy from GitHub repo →** pick this repo. Railway runs `npm install` and `npm start` by itself.
-3. In the service's **Variables**, add `AGENT_HUB_TOKEN` (any long secret) and `AGENT_HUB_DATA_DIR=/data`.
-4. Add a **Volume** mounted at `/data`, so the chat, locks and tasks survive redeploys.
-5. In **Settings → Networking**, click **Generate Domain**. That `https://…up.railway.app` address is your hub.
+1. On [railway.com](https://railway.com): **New Project → Deploy from GitHub repo →** pick this repo. Railway runs `npm install` and `npm start` by itself.
+2. Add a **Volume** mounted at `/data`, so chat, locks, tasks and keys survive redeploys.
+3. In **Settings → Networking**, click **Generate Domain**. That `https://…up.railway.app` address is your hub.
+4. Create a **GitHub OAuth App** (GitHub → Settings → Developer settings → OAuth Apps → New): homepage = your hub address, callback = `<hub>/auth/github/callback`, and check **Enable Device Flow**. No client secret is needed.
+5. In the service's **Variables**, add:
+   - `GITHUB_OAUTH_CLIENT_ID`: the OAuth App's Client ID
+   - `AGENT_HUB_DATA_DIR=/data`
+   - `AGENT_HUB_TOKEN`: a long random admin secret (`openssl rand -hex 32`), for you only. Never put it in a repo.
 
-Check it by opening `https://<your-domain>/?token=<your-secret>`. If the dashboard says "Hub offline", the `?token=` part is missing or doesn't match `AGENT_HUB_TOKEN`.
+### 2. Add the kit to a team repo
 
-### 2. Add the kit to the team repo
-
-From this repo, point the installer at your local clone of the team (hackathon) repo:
+From this repo, point the installer at your local clone of the team repo:
 
 ```bash
 npm install
-node install-kit.mjs ../team-repo --hub https://<your-domain> --token <your-secret>
+node install-kit.mjs ../team-repo --hub https://<your-hub>
 ```
 
-It adds an `agentstalk/` folder (hook, commit check, wake-up channel bundled into one file, join script and team settings), the Claude Code hook settings in `.claude/settings.json`, and the coordination rules in `AGENTS.md`. It also looks up the public Client ID of the team's GitHub App (`agentstalk` by default, `--github-app <slug>` for another), so teammates sign in with GitHub. Running it again is safe.
-
-Commit and push those files. **Keep the team repo private**, because it holds the team token.
+It adds an `agentstalk/` folder (hook, commit check, wake-up channel bundled into one file, setup script, and the hub address), the Claude Code hook settings in `.claude/settings.json`, and the coordination rules in `AGENTS.md`. There's nothing secret in it. Commit and push. Running it again is safe and also upgrades older kits.
 
 ### 3. Each teammate (1 minute)
 
@@ -54,13 +62,13 @@ git clone <team-repo> && cd <team-repo>
 node agentstalk
 ```
 
-It shows a short code and opens GitHub: approve it, and your **GitHub username becomes your name** (your agent is `<username>-agent`). It's remembered in `~/.agentstalk/`, so other repos don't ask again; `node agentstalk --switch-user` changes it. The script then:
-- saves the hub settings in this clone's Git config,
+It shows a short code and opens GitHub: approve it. Your **GitHub username becomes your name** (your agent is `<username>-agent`). For a private repo, GitHub asks for access to your repositories, which agentsTalk only uses to check you're on the team. The GitHub sign-in is saved in `~/.agentstalk/` (readable only by you), so other repos don't ask again; `node agentstalk --switch-user` signs in again. The script then:
+- gets your personal key and saves it in this clone's Git config,
 - adds you to the project's team on the dashboard,
 - installs the commit check,
 - connects Claude Code to the hub tools and the wake-up channel for this project,
 - installs the `agentstalk` command (adds `~/.agentstalk/bin` to your PATH in `~/.zshrc`),
-- prints your dashboard link and an MCP URL for Cursor, Codex or other tools.
+- prints your personal dashboard link and the MCP settings for Cursor, Codex or other tools.
 
 From then on, start working by typing this in the repo (in a new terminal the first time):
 
@@ -70,13 +78,15 @@ agentstalk
 
 It starts Claude Code with the wake-up channel on, so teammates can reach your agent with @mentions. In a clone that isn't set up yet, it runs the setup first. If someone opens Claude in a clone that isn't set up, Claude tells them to run the setup.
 
+### Dashboard
+
+Open the personal link the setup prints (`https://<hub>/#key=…`). The key is moved into your browser's storage and removed from the address bar; the part after `#` is never sent to the server. Your name comes from GitHub, so there's nothing to pick. Each repo you join adds its project to the dashboard's project menu.
+
+The hub owner can open `https://<hub>/#admin=<AGENT_HUB_TOKEN>` to see every project.
+
 ### Several repos on one hub
 
-Each repo is its own **project** on the hub, with its own chat, locks, tasks and activity, so `src/api.ts` in one repo never blocks `src/api.ts` in another. To add a repo, run step 2 on it. The installer names the project after the GitHub repo (or the folder), and `--project <name>` picks another name.
-
-Teammates run `join.mjs` once in each repo they work in. The dashboard's project menu, next to the agentsTalk name, switches between repos, and the join script's dashboard link opens the right one.
-
-Data from before projects existed is kept in a project called `default`.
+Each GitHub repo is its own **project** (named `owner/repo`), with its own chat, locks, tasks and activity, so `src/api.ts` in one repo never blocks `src/api.ts` in another. To add a repo, run step 2 on it; teammates run `node agentstalk` once in each repo.
 
 ### Branches
 
@@ -85,146 +95,11 @@ Locks remember the Git branch they were taken on. The hook and the commit check 
 - **Same branch**: another agent's lock **blocks** the edit and the commit, because both would overwrite each other.
 - **Different branches**: the edit is **allowed**, and both agents get a one-time warning that a merge conflict is likely, so they can coordinate in the chat.
 
-Chat and tasks stay shared across the whole repo. Locks and activity show their branch, and the dashboard's branch menu filters them. Agents connected only through MCP (Cursor, Codex) pass their branch to `lock_files`.
+Chat and tasks stay shared across the whole repo. Locks and activity show their branch, and the dashboard's branch menu filters them.
 
-## Manual setup
+### Other agents (Cursor, Codex, …)
 
-The steps below do the same as the quick setup by hand, for example when running the hub on a laptop.
-
-### 1. Start the hub (one teammate's laptop)
-
-```bash
-npm install
-AGENT_HUB_TOKEN=pick-a-secret npm start
-```
-
-Find that laptop's address on the Wi-Fi (macOS):
-
-```bash
-ipconfig getifaddr en0
-```
-
-Everyone opens the dashboard at `http://<that-ip>:4000/?token=pick-a-secret`, types their name once, and can then chat.
-
-The token is optional, but use it on shared hackathon Wi-Fi so strangers can't connect.
-
-### 2. Pick names
-
-Give humans and agents **different** names so a mention reaches the right one. For example, the human is `ana` and her agent is `ana-agent`. Then `@ana-agent fix the login bug` wakes Ana's agent.
-
-In the examples below, replace `HUB` with `http://<that-ip>:4000`.
-
-### 3. Connect each agent
-
-#### Claude Code: tools, automatic locks and wake-up
-
-**a. Hub tools:**
-
-```bash
-claude mcp add --transport http agent-hub "HUB/mcp?agent=ana-agent&token=pick-a-secret"
-```
-
-**b. Hook.** Commit `hook.mjs` into your hackathon repo at `agentstalk/hook.mjs`, then add this to the repo's `.claude/settings.json`, which is shared:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agentstalk/hook.mjs\"" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agentstalk/hook.mjs\"" }] }],
-    "PreToolUse": [{ "matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agentstalk/hook.mjs\"" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/agentstalk/hook.mjs\"" }] }]
-  }
-}
-```
-
-**c. Your name.** Each person puts their own values in `.claude/settings.local.json`, which is not committed:
-
-```json
-{ "env": { "AGENT_HUB_URL": "HUB", "AGENT_HUB_NAME": "ana-agent", "AGENT_HUB_TOKEN": "pick-a-secret" } }
-```
-
-**d. Wake on mention (optional).** Clone this repo, run `npm install` in it, then, from inside your hackathon repo:
-
-```bash
-claude mcp add agent-hub-chat -- node /full/path/to/agent-hub/channel.mjs
-```
-
-Start Claude Code with the channel turned on, and keep that terminal open:
-
-```bash
-claude --dangerously-load-development-channels server:agent-hub-chat
-```
-
-Claude Code shows a warning about development channels the first time. Choose **I am using this for local development**.
-
-What each part does:
-- **Before every file edit**, the hook locks the file. If a teammate holds the lock, the edit is blocked and Claude is told who has the file.
-- **After every shell command**, the hook asks Git which files changed (this catches `sed`, `>`, scripts and so on), and locks them. If one is locked by a teammate, Claude is told to undo what its command did to that file. Nothing is reverted automatically.
-- **At session start**, Claude gets the full team status once. **After that**, it only gets new mentions, and nothing when there are none.
-- **When a human @mentions** `ana-agent` and the channel is running, the session wakes up, does the work, and answers in the chat with its `reply` tool.
-- If the hub is down, the hook lets work continue instead of blocking everyone.
-
-**Channel notes:**
-- Channels are a Claude Code research preview. Your login must be claude.ai or a Console API key. On Team or Enterprise plans an admin must enable channels first.
-- A woken agent that hits a permission prompt waits until someone approves it at that laptop. Use auto mode (Shift+Tab) for fewer stops.
-
-#### Cursor
-
-In `.cursor/mcp.json`:
-
-```json
-{ "mcpServers": { "agent-hub": { "url": "HUB/mcp?agent=ana-agent&token=pick-a-secret" } } }
-```
-
-#### Codex CLI
-
-In `~/.codex/config.toml`, if your version supports URL servers:
-
-```toml
-[mcp_servers.agent-hub]
-url = "HUB/mcp?agent=ana-agent&token=pick-a-secret"
-```
-
-#### Any other agent
-
-Use the same MCP URL with its HTTP MCP setting. With no MCP support, use the plain API:
-
-```bash
-curl "HUB/api/inbox?agent=ana-agent&token=pick-a-secret"
-curl -X POST "HUB/api/chat?agent=ana-agent&token=pick-a-secret" -d '{"text":"working on search"}'
-curl -X POST "HUB/api/lock?agent=ana-agent&token=pick-a-secret" -d '{"paths":["src/api.ts"],"reason":"adding search"}'
-```
-
-### 4. Commit check (covers every agent and human)
-
-A Git pre-commit hook refuses commits that include files a teammate has locked. It runs for every commit in that clone, whether Claude, Cursor, Codex or a human makes it.
-
-Commit `pre-commit.mjs` into the hackathon repo at `agentstalk/pre-commit.mjs`. Then each person runs this once in their clone:
-
-```bash
-printf '#!/bin/sh\nexec node agentstalk/pre-commit.mjs\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
-```
-
-```bash
-git config agenthub.name ana-agent && git config agenthub.url HUB && git config agenthub.token pick-a-secret
-```
-
-Use **one agent name per laptop** (e.g. `ana-agent`) for every tool on it, Claude, Cursor or anything else. The commit check treats files locked under that name as yours.
-
-### 5. Tell non-Claude agents the rules
-
-Only Claude Code gets the automatic lock check and wake-up. Other agents follow the rules only if you tell them, so paste this into your repo's `AGENTS.md`, which Cursor, Codex and others read:
-
-```md
-## Team coordination (agent-hub MCP)
-- Call `status` once when you start.
-- Call `lock_files` with repo-relative paths BEFORE editing any file.
-  If a file comes back BLOCKED, don't edit it: do other work or ask the owner with `say`.
-- Post one short line with `say` when you start or finish something. Use @name to address someone.
-- Use `update_task` to set your task to `doing` when you start and `done` when it's merged.
-- After you commit and push, call `unlock_files`.
-- Never use `git commit --no-verify`: it skips the team's lock check.
-```
+The setup prints an MCP server URL (`https://<hub>/mcp`) and a header (`Authorization: Bearer <your key>`). Add both to the tool's MCP settings. These tools don't get the automatic lock check, so they follow the rules in `AGENTS.md`; the commit check still covers their commits. With `lock_files` and `unlock_files` they pass their Git branch.
 
 ## Tools agents get
 
@@ -245,4 +120,4 @@ Only Claude Code gets the automatic lock check and wake-up. Other agents follow 
 - Locks are per file. Two agents can still break each other through different files, e.g. by renaming a function. Merge small and often.
 - Claude Code's edits are stopped before they happen. Its shell edits are caught right after, and Claude is told to undo them. Other tools are caught at commit time.
 - The commit check can be skipped with `git commit --no-verify`, so the rules tell agents never to use it.
-- State, including the chat, is saved to `state.json`, so restarting the server keeps everything.
+- State, including the chat and hashed keys, is saved to `state.json`, so restarting the server keeps everything.

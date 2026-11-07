@@ -1,5 +1,6 @@
 import http from "node:http";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -9,7 +10,16 @@ import { z } from "zod";
 const DEFAULT_PORT = 4000;
 // Cloud hosts such as Railway assign the port through PORT.
 const PORT = Number(process.env.PORT ?? process.env.AGENT_HUB_PORT ?? DEFAULT_PORT);
-const TEAM_TOKEN = process.env.AGENT_HUB_TOKEN ?? "";
+// The hub owner's admin token; never put it in a repo. Teammates use personal keys instead.
+const ADMIN_TOKEN = process.env.AGENT_HUB_TOKEN ?? "";
+// Public Client ID of the GitHub OAuth App used for sign-in (device flow needs no secret).
+const GITHUB_OAUTH_CLIENT_ID = process.env.GITHUB_OAUTH_CLIENT_ID ?? "";
+const GITHUB_API = "https://api.github.com";
+// GitHub permission flags that count as being on the repo's team.
+const WRITE_ROLES = ["admin", "maintain", "push"];
+const REPO_NAME_PATTERN = /^[\w.-]+\/[\w.-]+$/;
+const KEY_BYTES = 32;
+const AGENT_SUFFIX = "-agent";
 const LOCK_TTL_MINUTES = 20;
 const LOCK_TTL_MS = LOCK_TTL_MINUTES * 60_000;
 const MAX_EVENTS = 200;
@@ -24,7 +34,8 @@ const EVERYONE = "all";
 const UNKNOWN_AGENT = "unknown";
 // Requests without a project (older kits) land here, so they keep working.
 const DEFAULT_PROJECT = "default";
-const PROJECT_NAME_PATTERN = /[^a-z0-9._-]/g;
+// Projects are named after GitHub repos ("owner/name"), so a slash is allowed.
+const PROJECT_NAME_PATTERN = /[^a-z0-9._/-]/g;
 const MENTION_PATTERN = /@([a-z0-9_-]+)/gi;
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 // On a cloud host, point AGENT_HUB_DATA_DIR at a mounted disk so data survives redeploys.
@@ -37,26 +48,33 @@ const store = loadStore();
 const wakeStreams = new Map();
 
 http.createServer(handleRequest).listen(PORT, () => {
-  console.log(`agentsTalk running: dashboard at http://localhost:${PORT}/  MCP at http://localhost:${PORT}/mcp?project=<repo>&agent=<name>`);
+  console.log(`agentsTalk running on port ${PORT}${GITHUB_OAUTH_CLIENT_ID ? "" : " (GITHUB_OAUTH_CLIENT_ID not set: GitHub sign-in is off)"}`);
 });
 setInterval(sendHeartbeats, HEARTBEAT_MS);
 
 /**
- * Routes every HTTP request: the dashboard page, the JSON API used by hooks,
- * channels and the dashboard, and the MCP endpoint any agent can connect to.
- * The `project` query parameter picks which repo's space to use, so one hub
- * can serve several repos without their locks or chat mixing; `agent` is the
- * caller's name.
+ * Routes every HTTP request: the dashboard page, sign-in, the JSON API used by
+ * hooks, channels and the dashboard, and the MCP endpoint agents connect to.
+ * Callers prove who they are with a personal key in the Authorization header,
+ * which fixes both their name and their project (repo), so nobody can act as
+ * someone else or reach another team's repo. The admin token can still pick
+ * any project and name through the query, for the hub owner.
  */
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const agent = cleanName(url.searchParams.get("agent"));
-  const project = cleanProject(url.searchParams.get("project"));
   const branch = cleanBranch(url.searchParams.get("branch"));
   try {
     if (url.pathname === "/") return sendFile(res, DASHBOARD_FILE);
-    if (!isAuthorized(req, url)) return sendJson(res, 401, { error: "Wrong or missing team token" });
-    if (req.method === "GET" && url.pathname === "/api/projects") return sendJson(res, 200, listProjects());
+    if (req.method === "GET" && url.pathname === "/api/config") return sendJson(res, 200, { githubClientId: GITHUB_OAUTH_CLIENT_ID });
+    if (req.method === "POST" && url.pathname === "/api/auth/github") return sendJson(res, 200, await signIn(await readJson(req)));
+    const caller = authenticate(req);
+    if (!caller) return sendJson(res, 401, { error: "Missing or unknown key. Run the agentsTalk setup in the repo to get yours." });
+    const project = caller.admin ? cleanProject(url.searchParams.get("project")) : caller.project;
+    // Each person acts as their agent; the dashboard asks to act as the person.
+    const asHuman = url.searchParams.get("as") === "human";
+    const agent = caller.admin ? cleanName(url.searchParams.get("agent")) : asHuman ? caller.login : `${caller.login}${AGENT_SUFFIX}`;
+    if (req.method === "GET" && url.pathname === "/api/me") return sendJson(res, 200, { login: caller.login, project, admin: caller.admin });
+    if (req.method === "GET" && url.pathname === "/api/projects") return sendJson(res, 200, listProjects(caller));
     const space = spaceFor(project);
     if (url.pathname === "/mcp") return await handleMcp(req, res, space, project, agent);
     if (req.method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, snapshot(space));
@@ -65,11 +83,7 @@ async function handleRequest(req, res) {
     if (req.method === "GET" && url.pathname === "/api/wake") return openWakeStream(req, res, project, agent);
     if (req.method === "POST" && url.pathname === "/api/chat") {
       const body = await readJson(req);
-      return sendJson(res, 200, publicMessage(postChat(project, agent, body.text, body.human === true)));
-    }
-    if (req.method === "POST" && url.pathname === "/api/join") {
-      const body = await readJson(req);
-      return sendJson(res, 200, joinProject(space, cleanName(body.human), agent));
+      return sendJson(res, 200, publicMessage(postChat(project, agent, body.text, asHuman)));
     }
     if (req.method === "POST" && url.pathname === "/api/lock") {
       const body = await readJson(req);
@@ -85,8 +99,68 @@ async function handleRequest(req, res) {
     }
     sendJson(res, 404, { error: "Not found" });
   } catch (error) {
-    sendJson(res, 500, { error: error?.message ?? String(error) });
+    sendJson(res, error.status ?? 500, { error: error?.message ?? String(error) });
   }
+}
+
+/**
+ * Exchanges a GitHub sign-in for a personal agentsTalk key. GitHub is asked
+ * who the person is and whether they can write to the repo; only people with
+ * write access get in, so a public repo stays safe. The GitHub token is used
+ * for these two checks and never stored; only a hash of the new key is kept.
+ */
+async function signIn({ githubToken, repo }) {
+  if (!githubToken || !REPO_NAME_PATTERN.test(repo ?? "")) throw httpError(400, "Send a GitHub token and the repo as owner/name");
+  const user = await githubApi("/user", githubToken);
+  const repoInfo = await githubApi(`/repos/${repo}`, githubToken);
+  if (!WRITE_ROLES.some((role) => repoInfo.permissions?.[role])) {
+    throw httpError(403, `${user.login} can't write to ${repo} on GitHub, so they can't join its team`);
+  }
+  const login = cleanName(user.login);
+  const project = cleanProject(repoInfo.full_name);
+  const key = crypto.randomBytes(KEY_BYTES).toString("base64url");
+  store.keys[hashKey(key)] = { login, project, createdAt: Date.now() };
+  joinProject(spaceFor(project), login, `${login}${AGENT_SUFFIX}`);
+  return { key, login, project, agent: `${login}${AGENT_SUFFIX}` };
+}
+
+/**
+ * Works out who is calling from the Authorization header: a personal key
+ * (person and project come from it) or the admin token. Returns null for
+ * anyone else.
+ */
+function authenticate(req) {
+  const presented = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "").trim();
+  if (!presented) return null;
+  if (ADMIN_TOKEN && safeEqual(presented, ADMIN_TOKEN)) return { admin: true, login: "admin" };
+  const record = store.keys[hashKey(presented)];
+  return record ? { admin: false, login: record.login, project: record.project } : null;
+}
+
+/** Calls the GitHub API as the signed-in person and returns the JSON, or fails with GitHub's reason. */
+async function githubApi(route, token) {
+  const response = await fetch(`${GITHUB_API}${route}`, {
+    headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "agentsTalk" },
+  });
+  if (!response.ok) throw httpError(response.status === 404 ? 403 : 401, `GitHub refused ${route} (${response.status}); sign in again or check repo access`);
+  return response.json();
+}
+
+/** Stores keys as hashes, so a leaked state file doesn't reveal working keys. */
+function hashKey(key) {
+  return crypto.createHash("sha256").update(key).digest("hex");
+}
+
+/** Compares secrets in constant time. */
+function safeEqual(a, b) {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+/** An error that carries the HTTP status to answer with. */
+function httpError(status, message) {
+  return Object.assign(new Error(message), { status });
 }
 
 /**
@@ -376,14 +450,16 @@ function snapshot(space) {
 }
 
 /** Lists the projects that have any activity, most recently active first, for the dashboard's switcher. */
-function listProjects() {
+function listProjects(caller) {
   return Object.entries(store.projects)
+    // People only see their own repo's project; the admin sees every project.
+    .filter(([name]) => caller.admin || name === caller.project)
     .map(([name, space]) => ({
       name,
       lastActivity: Math.max(0, space.events.at(-1)?.at ?? 0, space.messages.at(-1)?.at ?? 0),
       locks: Object.keys(space.locks).length,
     }))
-    .filter((project) => project.lastActivity > 0)
+    .filter((project) => project.lastActivity > 0 || !caller.admin)
     .sort((a, b) => b.lastActivity - a.lastActivity);
 }
 
@@ -491,11 +567,6 @@ function cleanBranch(name) {
   return (name ?? "").trim();
 }
 
-/** Checks the optional team token so strangers on the same network can't join. */
-function isAuthorized(req, url) {
-  return !TEAM_TOKEN || url.searchParams.get("token") === TEAM_TOKEN || req.headers["x-team-token"] === TEAM_TOKEN;
-}
-
 /** Wraps text in the response shape MCP tools return. */
 function reply(text) {
   return { content: [{ type: "text", text }] };
@@ -533,8 +604,9 @@ function sendFile(res, file) {
  * move to the unnamed branch.
  */
 function loadStore() {
-  if (!fs.existsSync(STATE_FILE)) return { projects: {} };
+  if (!fs.existsSync(STATE_FILE)) return { projects: {}, keys: {} };
   const saved = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+  const keys = saved.keys ?? {};
   const projects = saved.projects ?? { [DEFAULT_PROJECT]: saved };
   for (const [name, space] of Object.entries(projects)) {
     projects[name] = { ...emptySpace(), ...space };
@@ -542,7 +614,7 @@ function loadStore() {
       if ("owner" in lock) projects[name].locks[file] = { "": lock };
     }
   }
-  return { projects };
+  return { projects, keys };
 }
 
 /** Writes every project's state to disk after each change. */

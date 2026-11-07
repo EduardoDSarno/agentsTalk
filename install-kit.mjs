@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Copies the agent-hub kit into a team repo. Run once, by whoever sets up the team:
-//   node install-kit.mjs <path-to-team-repo> --hub <hub-url> --token <team-token> [--project name] [--github-app slug]
+// Copies the agentsTalk kit into a team repo. Run once, by whoever sets up the team:
+//   node install-kit.mjs <path-to-team-repo> --hub <hub-url>
+// The kit holds no secrets, so the repo can be public: teammates get personal keys by signing in with GitHub.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,10 +14,7 @@ const DIR = path.dirname(fileURLToPath(import.meta.url));
 const KIT_FOLDER = "agentstalk";
 // Where earlier versions put the kit; the installer moves it.
 const OLD_KIT_FOLDERS = [".agent-hub", "agenttalk"];
-const AGENT_SUFFIX = "-agent";
-// The team's GitHub App; teammates sign in through it so their name comes from GitHub.
-const DEFAULT_GITHUB_APP = "agentstalk";
-const GITHUB_APP_API = "https://api.github.com/apps/";
+const GITHUB_REMOTE_PATTERN = /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/;
 const HOOK_COMMAND = `node "$CLAUDE_PROJECT_DIR/${KIT_FOLDER}/hook.mjs"`;
 const HOOK_EVENTS = {
   SessionStart: undefined,
@@ -41,25 +39,18 @@ await main();
  * Puts everything teammates need inside the team repo, so their whole setup
  * is cloning it and running the join script: the hook, the pre-commit check,
  * the wake-up channel bundled into one dependency-free file, the join script
- * with the hub address and token, the shared Claude Code hook settings, and
- * the coordination rules other agents read from AGENTS.md.
+ * with the hub address, the shared Claude Code hook settings, and the
+ * coordination rules other agents read from AGENTS.md. Nothing secret is
+ * written: who may join is decided by GitHub repo access.
  */
 async function main() {
-  const { positionals, values } = parseArgs({
-    allowPositionals: true,
-    options: {
-      hub: { type: "string" },
-      token: { type: "string" },
-      "github-app": { type: "string", default: DEFAULT_GITHUB_APP },
-      project: { type: "string" },
-    },
-  });
+  const { positionals, values } = parseArgs({ allowPositionals: true, options: { hub: { type: "string" } } });
   const repo = positionals[0];
-  if (!repo || !values.hub || !values.token) {
-    console.error("Usage: node install-kit.mjs <path-to-team-repo> --hub <hub-url> --token <team-token> [--project name] [--github-app slug]");
+  if (!repo || !values.hub) {
+    console.error("Usage: node install-kit.mjs <path-to-team-repo> --hub <hub-url>");
     process.exit(1);
   }
-  const project = (values.project ?? projectNameOf(repo)).toLowerCase();
+  const githubRepo = githubRepoOf(repo);
   const kit = path.join(repo, KIT_FOLDER);
   fs.mkdirSync(kit, { recursive: true });
   for (const old of OLD_KIT_FOLDERS) fs.rmSync(path.join(repo, old), { recursive: true, force: true });
@@ -68,38 +59,23 @@ async function main() {
 
   for (const file of ["hook.mjs", "pre-commit.mjs", "kit/join.mjs"]) fs.copyFileSync(path.join(DIR, file), path.join(kit, path.basename(file)));
   await bundleChannel(path.join(kit, "channel.mjs"));
-  const githubClientId = await githubClientIdOf(values["github-app"]);
-  writeJson(path.join(kit, "config.json"), { hubUrl: values.hub, token: values.token, project, githubClientId, agentSuffix: AGENT_SUFFIX });
+  writeJson(path.join(kit, "config.json"), { hubUrl: values.hub, repo: githubRepo });
   addHookSettings(path.join(repo, ".claude", "settings.json"));
   addRules(path.join(repo, "AGENTS.md"));
 
-  console.log(`Kit installed in ${path.resolve(repo)} as project "${project}".`);
-  console.log("Next: commit and push it (keep the repo private, it holds the team token).");
-  console.log(`Teammates then clone the repo and run: node ${KIT_FOLDER}`);
+  console.log(`Kit installed in ${path.resolve(repo)} for ${githubRepo ?? "a repo without a GitHub remote yet"}.`);
+  console.log("Next: commit and push it. The kit has no secrets, so the repo can be public.");
+  console.log(`Teammates with write access then clone the repo and run: node ${KIT_FOLDER}`);
 }
 
-/**
- * Picks the project name the hub keeps this repo's chat and locks under: the
- * GitHub repo name when there is an origin remote, so every clone agrees,
- * otherwise the folder name.
- */
-function projectNameOf(repo) {
+/** Reads "owner/name" from the repo's GitHub remote; the hub names the project after it. */
+function githubRepoOf(repo) {
   try {
     const remote = execFileSync("git", ["remote", "get-url", "origin"], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return path.basename(remote).replace(/\.git$/, "");
+    return GITHUB_REMOTE_PATTERN.exec(remote)?.[1];
   } catch {
-    return path.basename(path.resolve(repo));
+    return undefined; // no origin yet; the join script reads it from each clone
   }
-}
-
-/**
- * Looks up the GitHub App's public Client ID, which the setup script needs to
- * sign teammates in. The Client ID isn't secret, so it can live in the repo.
- */
-async function githubClientIdOf(slug) {
-  const response = await fetch(`${GITHUB_APP_API}${encodeURIComponent(slug)}`, { headers: { accept: "application/vnd.github+json" } });
-  if (!response.ok) throw new Error(`GitHub App "${slug}" not found (is it public?)`);
-  return (await response.json()).client_id;
 }
 
 /** Bundles the channel and its MCP dependency into one file, so teammates never run npm install. */

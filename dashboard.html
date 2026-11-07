@@ -134,6 +134,10 @@
         <span class="dot dot-off"></span>
         <span><span style="font-weight:500">Hub offline.</span> <span class="muted">Retrying automatically. Sending is paused until it reconnects.</span></span>
       </div>
+      <div class="banner" role="alert" id="signed-out" hidden>
+        <span class="dot dot-off"></span>
+        <span><span style="font-weight:500">Not signed in.</span> <span class="muted">Run <span class="mono">node agentstalk</span> in your team's repo and open the personal dashboard link it prints.</span></span>
+      </div>
       <div class="scroll" id="chat-scroll"><div class="column" id="chat"></div></div>
       <div class="empty" id="chat-empty" hidden>
         <div style="font-weight:500">No messages yet</div>
@@ -199,12 +203,15 @@
   // The project's people (from their GitHub names) and everyone @mentionable; filled from the hub.
   let teamMembers = [];
   let mentionable = [EVERYONE];
-  const DEFAULT_PROJECT = "default"; // keep equal to DEFAULT_PROJECT in server.mjs
-  const token = new URLSearchParams(location.search).get("token") ?? "";
+  // Personal keys saved in this browser, one per project (repo); the admin token, if any, under ADMIN_SLOT.
+  const KEYS_STORE = "agentstalk-keys";
+  const ADMIN_SLOT = "*admin";
   const $ = (id) => document.getElementById(id);
 
-  // The project (repo) this page shows; the join script's dashboard link sets it.
-  let project = new URLSearchParams(location.search).get("project") || DEFAULT_PROJECT;
+  let keys = readKeys();
+  // The project (repo) this page shows; a personal key decides it, or ?project= picks among saved ones.
+  let project = new URLSearchParams(location.search).get("project") || Object.keys(keys).find((name) => name !== ADMIN_SLOT) || "";
+  let isAdmin = false;
   let currentName = readStored(NAME_KEY);
   // Which branch's locks and activity to show; "" shows all branches.
   let branchFilter = "";
@@ -215,9 +222,21 @@
   let chatKey = "";
   let suggestions = [];
 
-  /** Sets up theme, user picker and composer, then keeps the page in sync with the hub. Runs once, at the end of this script. */
-  function start() {
+  /**
+   * Sets up theme, sign-in, user picker and composer, then keeps the page in
+   * sync with the hub. Runs once, at the end of this script.
+   */
+  async function start() {
     applyTheme(readStored(THEME_KEY) || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+    await adoptKeyFromLink();
+    await loadIdentity();
+    // A personal link opened in an already-open dashboard only changes the "#" part, without a reload.
+    addEventListener("hashchange", async () => {
+      await adoptKeyFromLink();
+      await loadIdentity();
+      if (currentName) pickName(currentName);
+      refresh();
+    });
     setUpPicker();
     setUpComposer();
     $("theme-btn").addEventListener("click", () => applyTheme($("hub").classList.contains("light") ? "dark" : "light"));
@@ -232,8 +251,9 @@
 
   /** Pulls the latest team state from the hub and redraws every panel; a failure flips the page to offline. */
   async function refresh() {
+    if (!currentKey()) return;
     try {
-      const [response, projectsResponse] = await Promise.all([fetch(`/api/state?${hubQuery()}`), fetch(`/api/projects?${hubQuery()}`)]);
+      const [response, projectsResponse] = await Promise.all([hubFetch("/api/state"), hubFetch("/api/projects")]);
       if (!response.ok) throw new Error((await response.json()).error);
       const { locks, tasks, events, messages, members } = await response.json();
       if (projectsResponse.ok) renderProjects(await projectsResponse.json());
@@ -371,19 +391,21 @@
    * keeping the current one listed even before anything happens in it.
    */
   function renderProjects(projects) {
-    const names = [...new Set([project, ...projects.map((p) => p.name)])];
+    const saved = Object.keys(keys).filter((name) => name !== ADMIN_SLOT);
+    const names = [...new Set([project, ...saved, ...projects.map((p) => p.name)])].filter(Boolean);
     const html = names.map((name) => `<option value="${esc(name)}"${name === project ? " selected" : ""}>${esc(name)}</option>`).join("");
     if ($("project").innerHTML !== html) $("project").innerHTML = html;
   }
 
-  /** Shows another project: updates the address so the link can be shared, clears the old chat and reloads. */
-  function switchProject(name) {
+  /** Shows another project with its saved key: updates the address, clears the old chat and reloads. */
+  async function switchProject(name) {
     project = name;
     const params = new URLSearchParams(location.search);
     params.set("project", name);
     history.replaceState(null, "", `?${params}`);
     chatKey = "";
     lastMessages = [];
+    await loadIdentity();
     refresh();
   }
 
@@ -391,9 +413,10 @@
   async function sendChat() {
     const text = $("draft").value.trim();
     if (!canSend()) return;
-    const url = `/api/chat?agent=${encodeURIComponent(currentName)}&${hubQuery()}`;
+    // As the signed-in person (not their agent); the admin picks a name with the picker.
+    const query = isAdmin ? `as=human&agent=${encodeURIComponent(currentName)}` : "as=human";
     try {
-      const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, human: true }) });
+      const response = await hubFetch(`/api/chat?${query}`, { method: "POST", body: JSON.stringify({ text }) });
       if (!response.ok) throw new Error();
       $("draft").value = "";
       updateComposer();
@@ -484,6 +507,8 @@
 
   /** Opens the user picker, marking the current user; Cancel only shows once someone is chosen. */
   function openPicker() {
+    // Signed-in people are named by GitHub; only the admin picks who to post as.
+    if (currentKey() && !isAdmin) return;
     $("pick-list").innerHTML = teamMembers.length ? teamMembers.map((n) => `
       <button class="pick" data-name="${n}">
         <span class="av av-h" style="width:28px;height:28px;font-size:12px">${esc(initial(n))}</span>
@@ -557,9 +582,64 @@
     return (name || "?")[0].toUpperCase();
   }
 
-  /** The project and token every hub request carries. */
-  function hubQuery() {
-    return `project=${encodeURIComponent(project)}&token=${encodeURIComponent(token)}`;
+  /**
+   * Picks up a key from a personal link (#key=… or #admin=…), asks the hub
+   * which project and person it belongs to, saves it in this browser, and
+   * removes it from the address bar. The part after "#" is never sent to
+   * the server, so the key doesn't land in server logs.
+   */
+  async function adoptKeyFromLink() {
+    const params = new URLSearchParams(location.hash.slice(1));
+    const key = params.get("key") ?? params.get("admin");
+    if (!key) return;
+    history.replaceState(null, "", location.pathname + location.search);
+    const response = await fetch("/api/me", { headers: { authorization: `Bearer ${key}` } });
+    if (!response.ok) return;
+    const me = await response.json();
+    if (me.admin) keys[ADMIN_SLOT] = key;
+    else {
+      keys[me.project] = key;
+      project = me.project;
+    }
+    writeStored(KEYS_STORE, JSON.stringify(keys));
+  }
+
+  /**
+   * Asks the hub who the current key belongs to. A personal key fixes the
+   * name (from GitHub), so the "Who are you?" picker is skipped; the admin
+   * token keeps the picker. Without any key, shows the sign-in hint.
+   */
+  async function loadIdentity() {
+    $("signed-out").hidden = Boolean(currentKey());
+    if (!currentKey()) return;
+    const response = await hubFetch("/api/me");
+    if (!response.ok) return;
+    const me = await response.json();
+    isAdmin = me.admin;
+    if (!isAdmin) {
+      project = me.project;
+      currentName = me.login;
+      writeStored(NAME_KEY, me.login);
+    }
+  }
+
+  /** Sends a request to the hub with the right key in the header; the admin also names the project. */
+  function hubFetch(path, options = {}) {
+    const adminProject = keys[project] || !project ? "" : `${path.includes("?") ? "&" : "?"}project=${encodeURIComponent(project)}`;
+    return fetch(path + adminProject, {
+      ...options,
+      headers: { "content-type": "application/json", authorization: `Bearer ${currentKey()}`, ...options.headers },
+    });
+  }
+
+  /** The key for the shown project, falling back to the admin token. */
+  function currentKey() {
+    return keys[project] || keys[ADMIN_SLOT] || "";
+  }
+
+  /** Reads the saved keys; storage can be blocked, so failures give none. */
+  function readKeys() {
+    try { return JSON.parse(readStored(KEYS_STORE) || "{}"); } catch { return {}; }
   }
 
   /** Escapes text so agent-written content can't inject HTML. */
