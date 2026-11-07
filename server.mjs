@@ -98,13 +98,14 @@ async function handleRequest(req, res) {
     // Each person acts as their agent; the dashboard asks to act as the person.
     const asHuman = url.searchParams.get("as") === "human";
     const agent = caller.admin ? cleanName(url.searchParams.get("agent")) : asHuman ? caller.login : `${caller.login}${AGENT_SUFFIX}`;
-    if (req.method === "GET" && url.pathname === "/api/me") return sendJson(res, 200, { login: caller.login, project, admin: caller.admin });
-    if (req.method === "GET" && url.pathname === "/api/projects") return sendJson(res, 200, listProjects(caller));
     const space = spaceFor(project);
     // The admin has no sign-in of their own, so only agents it acts as (name-agent) are recorded.
     if (caller.admin && agent.endsWith(AGENT_SUFFIX)) ensureMember(space, agent);
+    // Recorded before any route answers, so even the dashboard's lightweight polls count as being present.
     const actor = DASHBOARD_ROUTES.has(url.pathname) ? (caller.admin ? undefined : caller.login) : agent;
     if (actor) touchPresence(space, actor);
+    if (req.method === "GET" && url.pathname === "/api/me") return sendJson(res, 200, { login: caller.login, project, admin: caller.admin });
+    if (req.method === "GET" && url.pathname === "/api/projects") return sendJson(res, 200, listProjects(caller));
     if (url.pathname === "/mcp") return await handleMcp(req, res, space, project, agent);
     if (req.method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, snapshot(space, project));
     if (req.method === "POST" && url.pathname === "/api/presence") {
