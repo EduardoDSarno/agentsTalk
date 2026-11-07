@@ -61,6 +61,7 @@ test('CLI initializes and joins clones, preserves settings, and reuses GitHub lo
   const owner=await repo('owner');
   git(owner,'config','user.name','Setup Test');git(owner,'config','user.email','setup@example.invalid');git(owner,'config','commit.gpgsign','false');
   await fs.writeFile(path.join(owner,'AGENTS.md'),'Keep existing instructions.\n');
+  await fs.writeFile(path.join(owner,'CLAUDE.md'),'Existing Claude instructions.\n');
   await fs.mkdir(path.join(owner,'.codex'));await fs.writeFile(path.join(owner,'.codex/config.toml'),'model = "existing-model"\n');
   await fs.writeFile(path.join(owner,'.mcp.json'),JSON.stringify({mcpServers:{existing:{command:'other-tool'}}}));
   git(owner,'add','.');git(owner,'commit','-qm','Existing project');
@@ -85,6 +86,11 @@ test('CLI initializes and joins clones, preserves settings, and reuses GitHub lo
   const committed=git(owner,'show','--pretty=','--name-only','HEAD');
   assert.ok(!committed.includes('unrelated.txt'));assert.ok(!committed.includes('untracked.txt'));
   assert.ok(committed.includes('.mcp.json'));
+  assert.ok(committed.includes('CLAUDE.md'));
+  const claudeInstructions=git(owner,'show','HEAD:CLAUDE.md');
+  assert.match(claudeInstructions,/^Existing Claude instructions/);
+  assert.match(claudeInstructions,/agent-hub.*status/);
+  assert.match(claudeInstructions,/restart Claude Code/);
   assert.ok(!git(owner,'show','HEAD:agentstalk/config.json').includes('test-personal-key'));
   const mcp=JSON.parse(git(owner,'show','HEAD:.mcp.json'));
   assert.equal(mcp.mcpServers.existing.command,'other-tool');
@@ -101,6 +107,7 @@ test('CLI initializes and joins clones, preserves settings, and reuses GitHub lo
   assert.equal((await fs.stat(path.join(env.AGENTSTALK_HOME,'github.json'))).mode & 0o777,0o600);
   result=await run(owner,['--agent','codex'],env);assert.equal(result.code,0);assert.equal(await fs.readFile(path.join(owner,'.codex/config.toml'),'utf8'),config);
   assert.equal((await fs.readFile(path.join(owner,'AGENTS.md'),'utf8')).split('## Team coordination').length,2);
+  assert.equal((await fs.readFile(path.join(owner,'CLAUDE.md'),'utf8')).split('## Team coordination').length,2);
   const friend=await repo('friend');result=await run(friend,['join','--hub',url,'--agent','none'],env);assert.equal(result.code,0);assert.ok(!result.output.includes('enter the code'));
   const log=path.join(temp,'claude-commands.log');
   await fs.writeFile(path.join(bin,'claude'),'#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_CLAUDE_LOG"\nexit 0\n',{mode:0o755});

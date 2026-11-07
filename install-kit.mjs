@@ -41,6 +41,13 @@ const RULES = `${RULES_MARKER}
 - After you commit and push, call \`unlock_files\`.
 - Never use \`git commit --no-verify\`: it skips the team's lock check.
 `;
+const CLAUDE_RULES = `${RULES_MARKER}
+- Before starting a task, call the agentsTalk agent-hub \`status\` tool and check the team's work.
+- Before editing a file, use \`lock_files\` with its repository-relative path. Do not edit files reported as blocked.
+- Use \`say\` for short start and finish updates, and \`update_task\` when working on a shared task. Release your locks after committing and pushing.
+- If agent-hub tools are unavailable, tell the user to run \`npx agentstalk@latest --agent claude\` in this repository, then restart Claude Code and approve the project MCP server if prompted. Do not claim that the hub is connected until it is available.
+- Do not bypass the team's pre-commit lock check with \`git commit --no-verify\`.
+`;
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
 
@@ -81,6 +88,7 @@ export async function installKit(repo, hubUrl, { showNextSteps = true } = {}) {
   addClaudeMcp(path.join(repo, ".mcp.json"));
   addCodexConfig(path.join(repo, ".codex", "config.toml"));
   addRules(path.join(repo, "AGENTS.md"));
+  addRules(path.join(repo, "CLAUDE.md"), CLAUDE_RULES);
 
   console.log(`Kit installed in ${path.resolve(repo)} for ${githubRepo ?? "a repo without a GitHub remote yet"}.`);
   if (showNextSteps) {
@@ -188,10 +196,10 @@ function addCodexConfig(file) {
 }
 
 /** Appends the coordination rules to AGENTS.md unless they are already there. */
-function addRules(file) {
+function addRules(file, rules = RULES) {
   const current = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
   if (current.includes(RULES_MARKER)) return;
-  fs.writeFileSync(file, `${current}${current && !current.endsWith("\n") ? "\n" : ""}${current ? "\n" : ""}${RULES}`);
+  fs.writeFileSync(file, `${current}${current && !current.endsWith("\n") ? "\n" : ""}${current ? "\n" : ""}${rules}`);
 }
 
 /** Writes pretty-printed JSON, creating the folder if needed. */
