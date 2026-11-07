@@ -18,7 +18,8 @@ const HOOK_COMMAND = `node "$CLAUDE_PROJECT_DIR/${KIT_FOLDER}/hook.mjs"`;
 const HOOK_EVENTS = {
   SessionStart: undefined,
   UserPromptSubmit: undefined,
-  PreToolUse: "Edit|Write|MultiEdit|NotebookEdit",
+  // Bash is included so the hook can note which files a `git push` is about to send.
+  PreToolUse: "Edit|Write|MultiEdit|NotebookEdit|Bash",
   PostToolUse: undefined,
 };
 // Codex hooks: tool events run for every tool (the hook decides what matters), shell checks only for Bash.
@@ -128,8 +129,9 @@ function addHookSettings(file) {
   for (const [event, matcher] of Object.entries(HOOK_EVENTS)) {
     // Drop hook entries pointing at old kit folders, then add ours once.
     const pointsToOldKit = (entry) => OLD_KIT_FOLDERS.some((old) => JSON.stringify(entry).includes(`/${old}/hook.mjs`));
-    const entries = (settings.hooks[event] = (settings.hooks[event] ?? []).filter((entry) => !pointsToOldKit(entry)));
-    if (JSON.stringify(entries).includes(`${KIT_FOLDER}/hook.mjs`)) continue;
+    // Our own entries are replaced too, so a changed matcher reaches repos that already have the kit.
+    const isOurs = (entry) => JSON.stringify(entry).includes(`${KIT_FOLDER}/hook.mjs`);
+    const entries = (settings.hooks[event] = (settings.hooks[event] ?? []).filter((entry) => !pointsToOldKit(entry) && !isOurs(entry)));
     entries.push({ ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: HOOK_COMMAND }] });
   }
   writeJson(file, settings);

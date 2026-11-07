@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // agentsTalk hook for Claude Code and Codex. No dependencies: copy it into your project.
+import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -18,8 +19,10 @@ const IS_CODEX = process.env.AGENTSTALK_TOOL === "codex";
 const LOCK_REASON = `editing with ${IS_CODEX ? "Codex" : "Claude Code"}`;
 const SHELL_LOCK_REASON = "changed by a shell command";
 const RENAME_OR_COPY = /[RC]/;
-// A shell command that pushes; the hook then frees locks on files that are fully pushed.
+// A shell command that mentions pushing; the hook then checks whether files really got pushed.
 const PUSH_COMMAND = /\bgit\s+(?:-\S+\s+)*push\b/;
+// Where the hook remembers, inside .git, which files a push is about to send.
+const PUSH_STATE_FILE = "agentstalk-push.json";
 // Lines of a Codex apply_patch that name the files it changes.
 const PATCH_FILE_LINE = /^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm;
 // Set up means the setup script saved a personal key for this clone.
@@ -55,6 +58,7 @@ async function main() {
   try {
     if (event === "PreToolUse") {
       await guardEdit(input);
+      if (input.tool_name === "Bash" && PUSH_COMMAND.test(String(input.tool_input?.command ?? ""))) rememberUnpushedFiles(input);
       return IS_CODEX ? addContext(event, await hub("GET", "/api/inbox")) : undefined;
     }
     if (event === "PostToolUse" && input.tool_name === "Bash") {
@@ -131,21 +135,46 @@ async function checkShellChanges(input) {
 }
 
 /**
- * Runs after a `git push`: frees this agent's locks on every file that now
- * matches the upstream branch and has no uncommitted changes, so locks don't
- * stay held after the work is shared. Files still changed locally, or whose
- * push didn't go through, keep their locks. Does nothing without an upstream
- * branch, since pushed work can't be told apart then.
+ * Runs before a command that mentions `git push`: remembers which files are
+ * in commits not yet on the upstream branch, i.e. what the push would send.
+ * Does nothing without an upstream branch.
+ */
+function rememberUnpushedFiles(input) {
+  const root = repoRoot(input);
+  const files = unpushedFiles(root);
+  if (files) fs.writeFileSync(pushStatePath(root), JSON.stringify({ files }));
+}
+
+/**
+ * Runs after that command: frees this agent's locks only on files that were
+ * waiting to be pushed and now are on the upstream branch with no local
+ * changes. A failed push, a command that only mentions pushing (like an
+ * echo), and files that are locked but not edited yet all keep their locks.
  */
 async function releasePushedLocks(input) {
   const root = repoRoot(input);
-  let unpushed;
+  const stateFile = pushStatePath(root);
+  if (!fs.existsSync(stateFile)) return;
+  const { files: before } = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  fs.rmSync(stateFile, { force: true });
+  const stillUnpushed = new Set(unpushedFiles(root) ?? before);
+  const dirty = new Set(changedFiles(root));
+  const pushed = before.filter((file) => !stillUnpushed.has(file) && !dirty.has(file));
+  if (pushed.length) await hub("POST", "/api/unlock", { paths: pushed });
+}
+
+/** Files in local commits that the upstream branch doesn't have yet; nothing when there is no upstream. */
+function unpushedFiles(root) {
   try {
-    unpushed = execFileSync("git", ["diff", "--name-only", "-z", "@{upstream}"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\0").filter(Boolean);
+    return execFileSync("git", ["diff", "--name-only", "-z", "@{upstream}..HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\0").filter(Boolean);
   } catch {
-    return; // no upstream configured
+    return undefined;
   }
-  await hub("POST", "/api/release", { dirty: [...changedFiles(root), ...unpushed] });
+}
+
+/** Where the push state lives: inside this clone's .git folder, so it is never committed. */
+function pushStatePath(root) {
+  return path.resolve(root, execFileSync("git", ["rev-parse", "--git-path", PUSH_STATE_FILE], { cwd: root, encoding: "utf8" }).trim());
 }
 
 /** Lists files Git sees as modified, added, deleted or untracked, relative to the repo root. */

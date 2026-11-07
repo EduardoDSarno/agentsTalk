@@ -150,10 +150,6 @@ async function handleRequest(req, res) {
       const body = await readJson(req);
       return sendJson(res, 200, unlockFiles(space, agent, url.searchParams.has("branch") ? branch : undefined, body.paths));
     }
-    if (req.method === "POST" && url.pathname === "/api/release") {
-      const body = await readJson(req);
-      return sendJson(res, 200, releaseCleanLocks(space, agent, branch, Array.isArray(body.dirty) ? body.dirty : []));
-    }
     sendJson(res, 404, { error: "Not found" });
   } catch (error) {
     sendJson(res, error.status ?? 500, { error: error?.message ?? String(error) });
@@ -422,18 +418,6 @@ function findBlocked(space, agent, branch, paths) {
     .map((file) => ({ file, lock: Object.entries(space.locks[file] ?? {}).find(([otherBranch, lock]) => lock.owner !== agent && (otherBranch === branch || !branch || !otherBranch))?.[1] }))
     .filter(({ lock }) => lock && lock.owner !== agent)
     .map(({ file, lock }) => ({ path: file, owner: lock.owner, reason: lock.reason, branch }));
-}
-
-/**
- * Frees the agent's locks on this branch for every file that isn't in the
- * `dirty` list (files still changed locally or not pushed yet). The hook
- * calls it after a push, so locks end when the work is shared instead of
- * waiting to expire. Does nothing without a branch name.
- */
-function releaseCleanLocks(space, agent, branch, dirty) {
-  const keep = new Set(dirty.filter((file) => typeof file === "string").map((file) => path.posix.normalize(file.trim().replace(/\\/g, "/"))));
-  const files = Object.keys(space.locks).filter((file) => space.locks[file][branch]?.owner === agent && !keep.has(file));
-  return branch && files.length ? unlockFiles(space, agent, branch, files) : { released: [], notYours: [] };
 }
 
 /**

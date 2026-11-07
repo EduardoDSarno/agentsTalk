@@ -12,7 +12,7 @@ const source = fileURLToPath(new URL('../', import.meta.url));
 const hash = (key) => createHash('sha256').update(key).digest('hex');
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
-test('locks are released after git push, except for files still changed or not pushed', async (t) => {
+test('locks are released only for files a successful git push really sent', async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentstalk-release-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const key = 'alice-release-key';
@@ -25,7 +25,7 @@ test('locks are released after git push, except for files still changed or not p
   const child = spawn(process.execPath, [path.join(source, 'server.mjs')], { env: { ...process.env, PORT: String(port), AGENT_HUB_DATA_DIR: dir, AGENT_HUB_TOKEN: 'admin-release-key' }, stdio: 'ignore' });
   t.after(() => child.kill());
   for (let attempt = 0; attempt < 100; attempt++) {
-    try { if ((await fetch(`${base}/api/config`)).ok) break; } catch { /* still starting */ }
+    try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* still starting */ }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   const call = async (route, body) => {
@@ -34,15 +34,7 @@ test('locks are released after git push, except for files still changed or not p
   };
   const lockedPaths = async () => (await call('/api/state')).locks.map((lock) => lock.path).sort();
 
-  // Server side: only files not in the dirty list are released, and only on the given branch.
-  await call('/api/lock?branch=main', { paths: ['a.txt', 'b.txt', 'c.txt'] });
-  await call('/api/lock?branch=other', { paths: ['d.txt'] });
-  assert.deepEqual((await call('/api/release?branch=main', { dirty: ['b.txt', './c.txt'] })).released, ['a.txt']);
-  assert.deepEqual(await lockedPaths(), ['b.txt', 'c.txt', 'd.txt']);
-  assert.deepEqual((await call('/api/release', { dirty: [] })).released, [], 'without a branch nothing is released');
-  await call('/api/unlock', {});
-
-  // Hook side, in a real clone with an upstream: lock three files, push one of them.
+  // A real clone with an upstream, and a hook that reads its settings from Git config as after a real setup.
   const remote = path.join(dir, 'remote.git');
   const clone = path.join(dir, 'clone');
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
@@ -50,28 +42,51 @@ test('locks are released after git push, except for files still changed or not p
   git(clone, 'config', 'user.email', 't@example.com');
   git(clone, 'config', 'user.name', 'T');
   for (const [name, value] of Object.entries({ url: base, key, project: 'team/project' })) git(clone, 'config', `agenthub.${name}`, value);
-  for (const file of ['pushed.txt', 'unpushed.txt', 'dirty.txt']) await fs.writeFile(path.join(clone, file), 'one\n');
+  for (const file of ['pushed.txt', 'unpushed.txt', 'dirty.txt', 'untouched.txt']) await fs.writeFile(path.join(clone, file), 'one\n');
   git(clone, 'add', '.');
   git(clone, 'commit', '-qm', 'base');
   git(clone, 'push', '-q', '-u', 'origin', 'main');
-  await call('/api/lock?branch=main', { paths: ['pushed.txt', 'unpushed.txt', 'dirty.txt'] });
-  await fs.writeFile(path.join(clone, 'pushed.txt'), 'two\n');
-  git(clone, 'commit', '-qam', 'change pushed');
-  git(clone, 'push', '-q');
-  await fs.writeFile(path.join(clone, 'unpushed.txt'), 'two\n');
-  git(clone, 'commit', '-qam', 'change unpushed, not pushed');
-  await fs.writeFile(path.join(clone, 'dirty.txt'), 'two\n');
 
-  // The hook reads the hub address and key from the clone's Git config, as after a real setup.
   const { AGENT_HUB_KEY, AGENT_HUB_URL, ...env } = process.env;
-  const runHook = (command) => execFileSync(process.execPath, [path.join(source, 'hook.mjs')], {
+  const hook = (event, command) => execFileSync(process.execPath, [path.join(source, 'hook.mjs')], {
     cwd: clone,
-    input: JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Bash', cwd: clone, tool_input: { command } }),
+    input: JSON.stringify({ hook_event_name: event, tool_name: 'Bash', cwd: clone, tool_input: { command } }),
     encoding: 'utf8',
     env: { ...env, CLAUDE_PROJECT_DIR: clone },
   });
-  runHook('ls');
-  assert.deepEqual(await lockedPaths(), ['dirty.txt', 'pushed.txt', 'unpushed.txt'], 'a command that is not a push releases nothing');
-  runHook('git push origin main');
-  assert.deepEqual(await lockedPaths(), ['dirty.txt', 'unpushed.txt'], 'only the fully pushed file is released');
+  const push = (command, shouldWork = true) => {
+    hook('PreToolUse', command);
+    try { execFileSync('sh', ['-c', command], { cwd: clone, stdio: 'ignore' }); } catch (error) { if (shouldWork) throw error; }
+    hook('PostToolUse', command);
+  };
+
+  // Four files are locked. One is committed and pushed, one committed but not pushed, one edited but not committed,
+  // and one only locked (about to be edited).
+  await call('/api/lock?branch=main', { paths: ['pushed.txt', 'unpushed.txt', 'dirty.txt', 'untouched.txt'] });
+  await fs.writeFile(path.join(clone, 'pushed.txt'), 'two\n');
+  git(clone, 'commit', '-qam', 'change pushed');
+  const everything = ['dirty.txt', 'pushed.txt', 'unpushed.txt', 'untouched.txt'];
+
+  // A command that only mentions pushing sends nothing, so nothing is released.
+  push('echo git push');
+  assert.deepEqual(await lockedPaths(), everything);
+
+  // A push that fails (no such remote) sends nothing either.
+  push('git push nowhere', false);
+  assert.deepEqual(await lockedPaths(), everything);
+
+  // The real push releases only the file it sent; locked-but-untouched files keep their locks.
+  await fs.writeFile(path.join(clone, 'dirty.txt'), 'two\n');
+  push('git push origin main');
+  assert.deepEqual(await lockedPaths(), ['dirty.txt', 'unpushed.txt', 'untouched.txt']);
+
+  // Later, committing and pushing the second file releases it too; the untouched one still stays locked.
+  await fs.writeFile(path.join(clone, 'unpushed.txt'), 'two\n');
+  git(clone, 'add', 'unpushed.txt');
+  git(clone, 'commit', '-qm', 'change unpushed');
+  push('git push');
+  assert.deepEqual(await lockedPaths(), ['dirty.txt', 'untouched.txt']);
+
+  // The remembered push state is kept inside .git, never in the working tree.
+  assert.equal(git(clone, 'status', '--porcelain').includes('agentstalk-push'), false);
 });
