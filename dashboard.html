@@ -110,7 +110,6 @@
   .status-working { background: var(--acc-fg); }
   .status-available { background: var(--ok); }
   .status-away { background: var(--icon); }
-  .wakeable { color: var(--ok); }
   .human-presence { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--line); }
   .human-presence .dot { display: inline-block; margin-right: 4px; vertical-align: middle; }
   .presence-form { margin: 0 16px 8px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
@@ -171,13 +170,13 @@
       <div class="scroll" id="chat-scroll"><div class="column" id="chat"></div></div>
       <div class="empty" id="chat-empty" hidden>
         <div style="font-weight:500">No messages yet</div>
-        <div class="muted">Type @ and pick an agent to wake it up.</div>
+        <div class="muted">Type @ to pick a teammate, or @all for everyone.</div>
       </div>
       <div class="composer-wrap column">
         <div class="composer-box">
           <div class="pop" id="suggest" role="listbox" aria-label="Mention suggestions" hidden></div>
           <div class="composer">
-            <textarea id="draft" rows="2" aria-label="Message" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false" placeholder="Message… use @name to wake an agent, @all for everyone"></textarea>
+            <textarea id="draft" rows="2" aria-label="Message" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false" placeholder="Message… use @name to address an agent, @all for everyone"></textarea>
             <div class="composer-bar">
               <button class="ghost user-btn" data-open-picker><span class="av av-h" style="width:18px;height:18px;font-size:10px" data-user-initial></span><span data-user-name></span></button>
               <span class="hints"><kbd>↵</kbd>send<kbd style="margin-left:6px">⇧↵</kbd>new line</span>
@@ -530,7 +529,6 @@
           <div class="member-meta">
             <span title="${seen ? esc(new Date(seen).toLocaleString()) : "No activity recorded"}">Last seen: ${lastSeenLabel(seen)}</span>
             <span>${locks} locked ${locks === 1 ? "file" : "files"}</span>
-            <span class="${member.wakeable ? "wakeable" : ""}">${member.wakeable ? "Wakeable" : "Not wakeable"}</span>
           </div>
           ${renderHumanPresence(member)}
         </div>
@@ -659,7 +657,7 @@
     refresh();
   }
 
-  /** Posts the draft to the chat as the current human, so it can wake mentioned agents. */
+  /** Posts the draft to the chat as the current human; agents read mentions on their next action. */
   async function sendChat() {
     const text = $("draft").value.trim();
     if (!canSend()) return;

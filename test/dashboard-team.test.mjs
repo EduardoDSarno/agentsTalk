@@ -20,16 +20,17 @@ function panel(members) {
   return { html: element('members').innerHTML, count: element('member-count').textContent, context };
 }
 
-test('Team panel renders status, work, last seen, locks and wakeability from members[]', () => {
+test('Team panel renders status, work, last seen, locks from members[]', () => {
   const result = panel([
-    {name: 'zoe', agent: 'zoe-agent', status: 'away', doing: '', lastSeen: null, locks: 0, wakeable: false},
-    {name: 'alice', agent: 'alice-agent', status: 'working', doing: 'Building the task board', lastSeen: Date.now(), locks: 1, wakeable: true},
-    {name: 'bob', agent: 'bob-agent', status: 'available', doing: 'Ready for review', lastSeen: Date.now() - 120_000, locks: 2, wakeable: false},
+    {name: 'zoe', agent: 'zoe-agent', status: 'away', doing: '', lastSeen: null, locks: 0},
+    {name: 'alice', agent: 'alice-agent', status: 'working', doing: 'Building the task board', lastSeen: Date.now(), locks: 1},
+    {name: 'bob', agent: 'bob-agent', status: 'available', doing: 'Ready for review', lastSeen: Date.now() - 120_000, locks: 2},
   ]);
   assert.equal(result.count, 3);
-  for (const text of ['Working', 'Available', 'Away', 'Building the task board', 'Ready for review', 'Last seen: just now', 'Last seen: 2 min ago', 'Last seen: never', '1 locked file', '2 locked files', 'Wakeable', 'Not wakeable']) assert.ok(result.html.includes(text), text);
+  for (const text of ['Working', 'Available', 'Away', 'Building the task board', 'Ready for review', 'Last seen: just now', 'Last seen: 2 min ago', 'Last seen: never', '1 locked file', '2 locked files']) assert.ok(result.html.includes(text), text);
   assert.ok(result.html.indexOf('@alice-agent') < result.html.indexOf('@zoe-agent'));
   assert.match(result.html, /class="dot status-working" aria-hidden="true"/);
+  assert.doesNotMatch(result.html, /wakeable/i);
 });
 
 test('Team panel escapes server-supplied names and work, and handles legacy members', () => {
@@ -51,7 +52,7 @@ test('Team panel has an empty state and readable older timestamps', () => {
 });
 
 test('Team panel shows independent human status, work and last seen', () => {
-  const result = panel([{name: 'alice', agent: 'alice-agent', status: 'away', lastSeen: null, locks: 0, wakeable: false, person: {status: 'working', doing: 'Reviewing <designs>', lastSeen: Date.now()}}]);
+  const result = panel([{name: 'alice', agent: 'alice-agent', status: 'away', lastSeen: null, locks: 0, person: {status: 'working', doing: 'Reviewing <designs>', lastSeen: Date.now()}}]);
   assert.match(result.html, /Human · Working/);
   assert.match(result.html, /Reviewing &#60;designs&#62;/);
   assert.match(result.html, /human-presence/);
