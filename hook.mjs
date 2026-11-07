@@ -21,6 +21,9 @@ const SHELL_LOCK_REASON = "changed by a shell command";
 const RENAME_OR_COPY = /[RC]/;
 // A shell command that mentions pushing; the hook then checks whether files really got pushed.
 const PUSH_COMMAND = /\bgit\s+(?:-\S+\s+)*push\b/;
+// `gh pr merge [number]`; the number is what the hub's review check needs.
+const MERGE_COMMAND = /\bgh\s+pr\s+merge\b(?:\s+(?:-\S+\s+)*(\d+))?/;
+const MAIN_BRANCHES = ["main", "master"];
 // Where the hook remembers, inside .git, which files a push is about to send.
 const PUSH_STATE_FILE = "agentstalk-push.json";
 // Lines of a Codex apply_patch that name the files it changes.
@@ -58,6 +61,7 @@ async function main() {
   try {
     if (event === "PreToolUse") {
       await guardEdit(input);
+      await guardMerge(input);
       if (input.tool_name === "Bash" && PUSH_COMMAND.test(String(input.tool_input?.command ?? ""))) rememberUnpushedFiles(input);
       return IS_CODEX ? addContext(event, await hub("GET", "/api/inbox")) : undefined;
     }
@@ -92,6 +96,28 @@ async function guardEdit(input) {
   const list = result.blocked.map((b) => `${b.path} is locked by ${b.owner} on this branch${b.reason ? ` (${b.reason})` : ""}`).join("; ");
   console.error(`${list}. Do not edit ${result.blocked.length > 1 ? "them" : "it"}. ` +
     `Work on something else, or ask @${result.blocked[0].owner} with the agent-hub say tool.`);
+  process.exit(BLOCK_EXIT_CODE);
+}
+
+/**
+ * Blocks changes to main that nobody else approved: `gh pr merge` waits for
+ * the hub to say another agent or a human approved that pull request, and a
+ * plain `git push` from main is refused because it skips review entirely.
+ */
+async function guardMerge(input) {
+  if (input.tool_name !== "Bash") return;
+  const command = String(input.tool_input?.command ?? "");
+  const merge = MERGE_COMMAND.exec(command);
+  let reason = "";
+  if (merge) {
+    reason = merge[1]
+      ? JSON.parse(await hub("GET", `/api/merge-check?pr=${merge[1]}`)).reason
+      : "Name the pull request number (gh pr merge <number>) so the hub can check its review.";
+  } else if (MAIN_BRANCHES.includes(BRANCH) && PUSH_COMMAND.test(command)) {
+    reason = `Pushing straight to ${BRANCH} skips review. Push a branch and open a pull request; another agent or a human approves it before it merges.`;
+  }
+  if (!reason) return;
+  console.error(reason);
   process.exit(BLOCK_EXIT_CODE);
 }
 
@@ -201,7 +227,7 @@ function changedFiles(root) {
 
 /** Calls the hub API as this agent, with the personal key in a header, and returns the response body as text. */
 async function hub(method, route, body) {
-  const response = await fetch(`${HUB_URL}${route}?branch=${encodeURIComponent(BRANCH)}`, {
+  const response = await fetch(`${HUB_URL}${route}${route.includes("?") ? "&" : "?"}branch=${encodeURIComponent(BRANCH)}`, {
     method,
     headers: { "content-type": "application/json", authorization: `Bearer ${KEY}` },
     body: body ? JSON.stringify(body) : undefined,
