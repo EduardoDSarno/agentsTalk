@@ -8,6 +8,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 
+// Files the hub creates (database, its write-ahead log, snapshots) are readable by its own user only.
+process.umask(0o077);
+
 const DEFAULT_PORT = 4000;
 // Cloud hosts such as Railway assign the port through PORT.
 const PORT = Number(process.env.PORT ?? process.env.AGENT_HUB_PORT ?? DEFAULT_PORT);
@@ -32,6 +35,10 @@ const CHAT_READ_MAX = 100;
 const RECENT_EVENTS_IN_STATUS = 10;
 const HEARTBEAT_MS = 25_000;
 const TASK_STATUSES = ["todo", "doing", "blocked", "done"];
+// Agents chat sparingly: a broadcast line (no @mention) at most this often, and only a few directed messages per window.
+const BROADCAST_INTERVAL_MS = 5 * 60_000;
+const DIRECTED_LIMIT = 6;
+const DIRECTED_WINDOW_MS = 10 * 60_000;
 // While a task is in one of these, only its owner can change it.
 const OWNED_TASK_STATUSES = ["doing", "blocked"];
 // Someone counts as present when the hub heard from them recently.
@@ -69,6 +76,8 @@ const savedKeys = new Map();
 /** Every project's chat, locks, tasks and activity, keyed by project name. */
 const store = loadStore();
 ensureSnapshot();
+/** When each agent recently posted in chat, per project, for the chat limits. */
+const recentAgentPosts = new Map();
 /** Open wake-up streams per project, then per agent name, used by the Claude Code channel. */
 const wakeStreams = new Map();
 
@@ -306,12 +315,34 @@ function postChat(project, from, text, fromHuman = false) {
   const clean = String(text ?? "").trim().slice(0, MAX_MESSAGE_CHARS);
   if (!clean) throw new Error("Message is empty");
   const mentions = [...new Set([...clean.matchAll(MENTION_PATTERN)].map((match) => match[1].toLowerCase()))];
+  if (!fromHuman) enforceChatLimits(project, from, mentions.length > 0);
   const message = { id: space.nextMessageId++, at: Date.now(), from, text: clean, mentions, fromHuman, readBy: [] };
   space.messages.push(message);
   space.messages = space.messages.slice(-MAX_MESSAGES);
   saveStore();
   deliverWakeUps(project);
   return message;
+}
+
+/**
+ * Keeps agents from flooding the chat. A broadcast line (no @mention) is
+ * allowed once per interval, since progress belongs in set_status and task
+ * notes; messages that @mention someone (questions, handoffs, review
+ * verdicts) are allowed a few per window. Humans are never limited. Fails
+ * with 429 and says what to do instead. Kept in memory, which is enough
+ * for limits this short.
+ */
+function enforceChatLimits(project, agent, directed) {
+  const now = Date.now();
+  const key = `${project}|${agent}`;
+  const recent = (recentAgentPosts.get(key) ?? []).filter((post) => now - post.at < Math.max(BROADCAST_INTERVAL_MS, DIRECTED_WINDOW_MS));
+  if (!directed && recent.some((post) => !post.directed && now - post.at < BROADCAST_INTERVAL_MS)) {
+    throw httpError(429, "You posted a general update a few minutes ago. Show progress with set_status or update_task; use chat for questions, handoffs and review verdicts, and @mention who it's for.");
+  }
+  if (directed && recent.filter((post) => post.directed && now - post.at < DIRECTED_WINDOW_MS).length >= DIRECTED_LIMIT) {
+    throw httpError(429, "You've sent several messages in a short time. Combine them into one, and put progress in set_status or task notes.");
+  }
+  recentAgentPosts.set(key, [...recent, { at: now, directed }]);
 }
 
 /**
@@ -540,16 +571,22 @@ function updateTask(space, agent, id, status, note) {
  * tasks, messages that mention them and recent activity in their project.
  */
 function statusText(space, project, agent) {
-  const { locks, tasks, events } = snapshot(space, project);
+  const { locks, tasks, events, members } = snapshot(space, project);
+  const now = Date.now();
+  const open = tasks.filter((t) => t.status !== "done");
   const lines = [
     `agentsTalk team hub — project "${project}", you are "${agent}".`,
-    "Rules: lock files before editing; never edit a file locked by someone else; unlock after you push. Post one short line with `say` when you start something; @name addresses someone.",
+    "Rules: check Team and Open tasks first. Claim a free task with update_task doing + a one-line plan note, lock files before editing, never edit a file locked by someone else, unlock after you push. Show progress with set_status or task notes; chat (`say`, @name) is for questions, handoffs and review verdicts, and is rate-limited.",
+    "",
+    "Team:",
+    ...(members.length ? members.map((m) => `- ${m.agent}: ${m.status}${m.doing ? ` — ${m.doing}` : ""}${m.lastSeen ? `, seen ${Math.round((now - m.lastSeen) / 60_000)} min ago` : ""}${m.wakeable ? ", wakeable" : ""}`) : ["- none"]),
     "",
     "File locks:",
     ...(locks.length ? locks.map((l) => `- ${l.path} — ${l.owner} on ${branchLabel(l.branch)}${l.reason ? ` (${l.reason})` : ""}, ${l.minutesLeft} min left`) : ["- none"]),
     "",
-    "Tasks:",
-    ...(tasks.length ? tasks.map((t) => `- #${t.id} [${t.status}] ${t.title}${t.owner ? ` — ${t.owner}` : ""}${t.note ? ` (${t.note})` : ""}`) : ["- none"]),
+    "Open tasks:",
+    ...(open.length ? open.map((t) => `- #${t.id} [${t.status}] ${t.owner ? t.owner : "unclaimed"}: ${t.title}${t.note ? ` (${t.note})` : ""}`) : ["- none"]),
+    ...(tasks.length > open.length ? [`(${tasks.length - open.length} done)`] : []),
     "",
     formatInbox(space, agent) || "No new chat messages for you.",
     "",

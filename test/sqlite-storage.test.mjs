@@ -100,4 +100,11 @@ test('health answers without a key and a snapshot of the database is kept', asyn
   const snapshots = (await fs.readdir(path.join(dir, 'snapshots'))).filter((file) => file.endsWith('.db'));
   assert.equal(snapshots.length, 1);
   assert.ok((await fs.stat(path.join(dir, 'snapshots', snapshots[0]))).size > 0);
+
+  // The database, its write-ahead log and the snapshots are private to the hub's user.
+  await hub.call('/api/tasks', { title: 'make the log file exist' }, 'admin-storage-key').catch(() => {});
+  for (const file of (await fs.readdir(dir)).filter((name) => name.startsWith('agentstalk.db'))) {
+    assert.equal((await fs.stat(path.join(dir, file))).mode & 0o077, 0, `${file} must not be readable by others`);
+  }
+  assert.equal((await fs.stat(path.join(dir, 'snapshots', snapshots[0]))).mode & 0o077, 0);
 });
