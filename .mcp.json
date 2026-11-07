@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "agent-hub": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "agentstalk/mcp-proxy.mjs"
+      ]
+    }
+  }
+}
