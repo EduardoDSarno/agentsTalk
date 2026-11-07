@@ -49,3 +49,12 @@ test('Team panel has an empty state and readable older timestamps', () => {
   assert.equal(vm.runInContext('lastSeenLabel(Date.now() - 3 * 60 * 60_000)', result.context), '3 hrs ago');
   assert.equal(vm.runInContext('lastSeenLabel(Date.now() - 2 * 24 * 60 * 60_000)', result.context), '2 days ago');
 });
+
+test('Team panel shows independent human status, work and last seen', () => {
+  const result = panel([{name: 'alice', agent: 'alice-agent', status: 'away', lastSeen: null, locks: 0, wakeable: false, person: {status: 'working', doing: 'Reviewing <designs>', lastSeen: Date.now()}}]);
+  assert.match(result.html, /Human · Working/);
+  assert.match(result.html, /Reviewing &#60;designs&#62;/);
+  assert.match(result.html, /human-presence/);
+  assert.match(result.html, /Last seen: just now/);
+  assert.match(result.html, />Away</);
+});

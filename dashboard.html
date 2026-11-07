@@ -111,6 +111,16 @@
   .status-available { background: var(--ok); }
   .status-away { background: var(--icon); }
   .wakeable { color: var(--ok); }
+  .human-presence { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--line); }
+  .human-presence .dot { display: inline-block; margin-right: 4px; vertical-align: middle; }
+  .presence-form { margin: 0 16px 8px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .presence-form label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--fg2); }
+  .presence-fields { display: flex; flex-wrap: wrap; gap: 6px; }
+  .presence-fields input { flex: 1 1 140px; min-width: 0; }
+  .presence-fields input, .presence-fields select { border: 1px solid var(--border); border-radius: 5px; background: var(--hover); color: var(--fg); padding: 5px 6px; font: inherit; font-size: 12px; }
+  .presence-fields button { padding: 4px 8px; border: 1px solid var(--border); border-radius: 5px; }
+  .presence-fields button:disabled { opacity: .45; }
+  .presence-feedback { font-size: 12px; margin-top: 4px; color: var(--fg2); }
   .event-row { grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; }
   .clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .lh { line-height: 20px; }
@@ -184,6 +194,15 @@
     <aside aria-label="Hub details">
       <section aria-labelledby="team-title">
         <div class="sec-head"><h2 id="team-title">Team</h2><span class="tn small muted" id="member-count"></span></div>
+        <form class="presence-form" id="presence-form" aria-label="Your presence" hidden>
+          <label for="presence-status">Your status</label>
+          <div class="presence-fields">
+            <select id="presence-status" aria-label="Your status" disabled><option value="available">Available</option><option value="working">Working</option><option value="away">Away</option></select>
+            <input id="presence-doing" aria-label="What you are doing" placeholder="What are you doing?" maxlength="120" disabled>
+            <button id="presence-save" type="submit" disabled>Save</button>
+          </div>
+          <div class="presence-feedback" id="presence-feedback" role="status" aria-live="polite"></div>
+        </form>
         <div id="members"></div>
       </section>
       <section>
@@ -253,6 +272,9 @@
   let taskBusy = false;
   let taskRenderKey = "";
   const taskNotes = new Map();
+  let presenceIdentity = "";
+  let presenceDirty = false;
+  let presenceBusy = false;
   let suggestions = [];
   let selectedSuggestion = 0;
   let suggestionsDismissed = false;
@@ -275,6 +297,7 @@
     setUpPicker();
     setUpComposer();
     setUpTasks();
+    setUpPresence();
     $("theme-btn").addEventListener("click", () => applyTheme($("hub").classList.contains("light") ? "dark" : "light"));
     $("project").addEventListener("change", (event) => switchProject(event.target.value));
     $("branch").addEventListener("change", (event) => {
@@ -492,6 +515,7 @@
 
   /** Shows agent presence for every member; older hubs fall back to away. */
   function renderTeam(members) {
+    syncPersonalPresence(members);
     $("member-count").textContent = members.length;
     const labels = { working: "Working", available: "Available", away: "Away" };
     $("members").innerHTML = members.length ? [...members].sort((a, b) => a.name.localeCompare(b.name)).map((member) => {
@@ -502,16 +526,83 @@
         <span class="dot status-${status}" aria-hidden="true"></span>
         <div class="member-main">
           <div class="member-head"><span class="member-name">@${esc(member.agent || member.name)}</span><span class="small muted">${labels[status]}</span></div>
-          <div class="small muted">${esc(member.name)}</div>
           ${member.doing ? `<div class="member-doing">${esc(member.doing)}</div>` : ""}
           <div class="member-meta">
             <span title="${seen ? esc(new Date(seen).toLocaleString()) : "No activity recorded"}">Last seen: ${lastSeenLabel(seen)}</span>
             <span>${locks} locked ${locks === 1 ? "file" : "files"}</span>
             <span class="${member.wakeable ? "wakeable" : ""}">${member.wakeable ? "Wakeable" : "Not wakeable"}</span>
           </div>
+          ${renderHumanPresence(member)}
         </div>
       </div>`;
     }).join("") : `<div class="none">No teammates yet</div>`;
+  }
+
+  /** Human and agent presence are independent: a dashboard poll only marks the human active. */
+  function renderHumanPresence(member) {
+    const person = member.person ?? {};
+    const labels = { working: "Working", available: "Available", away: "Away" };
+    const status = Object.hasOwn(labels, person.status) ? person.status : "away";
+    const seen = Number.isFinite(person.lastSeen) && person.lastSeen > 0 ? person.lastSeen : null;
+    return `<div class="human-presence small">
+      <div><span class="dot status-${status}" aria-hidden="true"></span><span>${esc(member.name)}</span><span class="muted"> · Human · ${labels[status]}</span></div>
+      ${person.doing ? `<div class="member-doing">${esc(person.doing)}</div>` : ""}
+      <div class="muted" title="${seen ? esc(new Date(seen).toLocaleString()) : "No activity recorded"}">Last seen: ${lastSeenLabel(seen)}</div>
+    </div>`;
+  }
+
+  function setPresenceAvailability() {
+    const signedIn = Boolean(currentName && currentKey());
+    $("presence-form").hidden = !signedIn;
+    for (const id of ["presence-status", "presence-doing", "presence-save"]) $(id).disabled = !signedIn || offline || presenceBusy;
+  }
+
+  /** Polls may update the form until the person starts editing it. */
+  function syncPersonalPresence(members) {
+    const identity = `${project}:${currentName}`;
+    if (presenceIdentity !== identity) {
+      presenceIdentity = identity;
+      presenceDirty = false;
+      $("presence-feedback").textContent = "";
+      $("presence-doing").value = "";
+      $("presence-status").value = "available";
+    }
+    if (!presenceDirty && !presenceBusy) {
+      const person = members.find((member) => member.name === currentName)?.person;
+      $("presence-status").value = ["available", "working", "away"].includes(person?.status) ? person.status : "available";
+      $("presence-doing").value = person?.doing ?? "";
+    }
+    setPresenceAvailability();
+  }
+
+  function setUpPresence() {
+    for (const id of ["presence-status", "presence-doing"]) $(id).addEventListener("input", () => { presenceDirty = true; });
+    $("presence-form").addEventListener("submit", (event) => { event.preventDefault(); savePersonalPresence(); });
+  }
+
+  async function savePersonalPresence() {
+    if (!currentName || !currentKey() || offline || presenceBusy) return;
+    const identity = `${project}:${currentName}`;
+    const status = $("presence-status").value;
+    const doing = $("presence-doing").value.trim();
+    presenceBusy = true;
+    $("presence-feedback").textContent = "";
+    setPresenceAvailability();
+    try {
+      const query = isAdmin ? `as=human&agent=${encodeURIComponent(currentName)}` : "as=human";
+      const response = await hubFetch(`/api/presence?${query}`, {method: "POST", body: JSON.stringify({status, doing})});
+      const result = await response.json().catch(() => ({}));
+      if (identity !== `${project}:${currentName}`) return;
+      if (!response.ok) throw new Error(result.error || `Status update failed (${response.status}).`);
+      presenceDirty = false;
+      $("presence-feedback").textContent = "Status saved.";
+      refresh();
+    } catch (error) {
+      if (identity === `${project}:${currentName}`) $("presence-feedback").textContent = error.message || "Could not save your status. Try again.";
+    } finally {
+      presenceBusy = false;
+      setPresenceAvailability();
+    }
   }
 
   /** Relative times refresh with the state; the exact time is available on hover. */
@@ -725,6 +816,7 @@
     $("conn").innerHTML = `<span class="dot ${isOffline ? "dot-off" : "dot-live"}"></span>${isOffline ? "Offline" : "Live"}`;
     updateComposer();
     renderTasks(lastTasks);
+    setPresenceAvailability();
   }
 
   /** Switches between dark and light colors and remembers the choice. */
