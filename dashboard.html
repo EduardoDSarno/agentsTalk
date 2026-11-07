@@ -24,9 +24,9 @@
   .ghost:hover { background: var(--hover); }
   .icon-btn { width: 28px; justify-content: center; color: var(--fg2); }
   .user-btn { padding: 0 8px 0 4px; font-weight: 500; }
-  .av { display: inline-flex; align-items: center; justify-content: center; flex: none; font-weight: 500; line-height: 1; background: var(--active); color: var(--fg); }
+  .av { display: inline-flex; align-items: center; justify-content: center; flex: none; font-weight: 500; line-height: 1; background: var(--avatar-bg, var(--active)); color: var(--avatar-fg, var(--fg)); }
   .av-h { border-radius: 50%; }
-  .av-a { border-radius: 5px; color: var(--fg2); }
+  .av-a { border-radius: 5px; }
   .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
   .dot-live { background: var(--ok); }
   .dot-off { background: var(--warn); }
@@ -90,7 +90,18 @@
   .row { padding: 5px 16px; column-gap: 10px; display: grid; }
   .row:hover { background: var(--hover); }
   .lock-row { grid-template-columns: 14px minmax(0, 1fr) auto; }
-  .task-row { grid-template-columns: 14px 22px minmax(0, 1fr) auto; column-gap: 8px; }
+  .task-row { grid-template-columns: 16px minmax(0, 1fr); align-items: start; column-gap: 9px; padding-top: 8px; padding-bottom: 8px; }
+  .task-title { overflow-wrap: anywhere; line-height: 1.45; }
+  .task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; color: var(--fg2); font-size: 12px; }
+  .task-owner { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+  .task-note { margin-top: 4px; overflow-wrap: anywhere; }
+  .agent-tabs { display: flex; gap: 4px; padding: 0 12px 8px; }
+  .agent-tab { padding: 4px 8px !important; color: var(--fg2) !important; border-radius: 5px; }
+  .agent-tab[aria-selected="true"] { color: var(--fg) !important; background: var(--active) !important; }
+  .agent-row { grid-template-columns: 24px minmax(0, 1fr); align-items: start; padding-top: 8px; padding-bottom: 8px; }
+  .agent-name { font-weight: 500; overflow-wrap: anywhere; }
+  .agent-work { color: var(--fg2); overflow-wrap: anywhere; }
+  .agent-status-hint { padding: 0 16px 6px; color: var(--fg2); font-size: 11px; }
   .event-row { grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; }
   .clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .lh { line-height: 20px; }
@@ -171,6 +182,15 @@
         <div id="tasks"></div>
       </section>
       <section>
+        <div class="sec-head"><h2>Agents</h2><span class="tn small muted" id="agent-count"></span></div>
+        <div class="agent-tabs" role="tablist" aria-label="Agent work status">
+          <button class="agent-tab" id="agents-working-tab" role="tab" aria-selected="true" aria-controls="agents" data-agent-view="working">Working</button>
+          <button class="agent-tab" id="agents-all-tab" role="tab" aria-selected="false" aria-controls="agents" data-agent-view="all" tabindex="-1">All agents</button>
+        </div>
+        <div class="agent-status-hint">Based on assigned tasks and file locks</div>
+        <div id="agents" role="tabpanel" aria-labelledby="agents-working-tab"></div>
+      </section>
+      <section>
         <div class="sec-head"><h2>Activity</h2></div>
         <div id="events"></div>
       </section>
@@ -200,6 +220,7 @@
   const NAME_KEY = "agent-hub-name";
   const THEME_KEY = "agent-hub-theme";
   const TASK_GROUPS = [["doing", "In progress"], ["todo", "Todo"], ["done", "Done"]];
+  const AVATAR_COLORS = [["#503567", "#f3d7ff"], ["#24515c", "#c8f5ff"], ["#5b3e27", "#ffe5c4"], ["#344c33", "#d8f8cb"], ["#503543", "#ffdae9"], ["#293e68", "#d5e3ff"], ["#555127", "#faf1bd"], ["#36504b", "#caf9e9"], ["#5a3840", "#ffdee0"], ["#403d70", "#dedbff"], ["#30505f", "#ccecff"], ["#4f4936", "#f6e9c5"]];
   // The project's people (from their GitHub names) and everyone @mentionable; filled from the hub.
   let teamMembers = [];
   let mentionable = [EVERYONE];
@@ -217,6 +238,9 @@
   let branchFilter = "";
   let lastLocks = [];
   let lastEvents = [];
+  let lastTasks = [];
+  let lastMembers = [];
+  let agentView = "working";
   let offline = false;
   let lastMessages = [];
   let chatKey = "";
@@ -245,6 +269,21 @@
       branchFilter = event.target.value;
       renderSidePanels();
     });
+    const agentTabs = [...document.querySelectorAll("[data-agent-view]")];
+    agentTabs.forEach((tab, index) => {
+      tab.addEventListener("click", () => {
+        agentView = tab.dataset.agentView;
+        agentTabs.forEach((button) => { button.setAttribute("aria-selected", String(button === tab)); button.tabIndex = button === tab ? 0 : -1; });
+        $("agents").setAttribute("aria-labelledby", tab.id);
+        renderAgents();
+      });
+      tab.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === "Home" ? 0 : event.key === "End" ? agentTabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + agentTabs.length) % agentTabs.length;
+        agentTabs[next].focus(); agentTabs[next].click();
+      });
+    });
     refresh();
     setInterval(refresh, REFRESH_MS);
   }
@@ -262,9 +301,12 @@
       lastMessages = messages;
       lastLocks = locks;
       lastEvents = events;
+      lastTasks = tasks;
+      lastMembers = members ?? [];
       renderChat();
       renderSidePanels();
       renderTasks(tasks);
+      renderAgents();
     } catch {
       setOffline(true);
     }
@@ -294,9 +336,7 @@
       }
       const grouped = prev && prev.from === m.from && m.at - prev.at <= GROUP_WINDOW_MS;
       const mentionsMe = m.from !== currentName && (m.mentions.includes(currentName) || m.mentions.includes(EVERYONE));
-      const avatar = grouped ? `<span class="ht tn">${time(m.at)}</span>`
-        : m.fromHuman ? `<span class="av av-h" style="width:24px;height:24px;font-size:11px">${esc(initial(m.from))}</span>`
-        : `<span class="av av-a" style="width:24px;height:24px">${AGENT_ICON}</span>`;
+      const avatar = grouped ? `<span class="ht tn">${time(m.at)}</span>` : personAvatar(m.from, !m.fromHuman, 24);
       const meta = grouped ? "" : `<div class="msg-meta"><span style="font-weight:500">${esc(m.from)}</span>${m.fromHuman ? "" : '<span class="small muted">Agent</span>'}<span class="tn small muted">${time(m.at)}</span></div>`;
       html += `<div class="msg ${grouped ? "cont" : "head"}${mentionsMe ? " is-me" : ""}"><div>${avatar}</div><div style="min-width:0">${meta}<div class="msg-text">${highlightMentions(m.text)}</div></div></div>`;
       prev = m;
@@ -328,14 +368,44 @@
         ${g.items.map((t) => `
           <div class="row task-row">
             <span style="display:inline-flex;padding-top:3px">${TASK_ICONS[t.status] ?? TASK_ICONS.todo}</span>
-            <span class="mono tn muted lh">${t.id}</span>
             <div style="min-width:0">
-              <div class="lh ${t.status === "done" ? "done-t" : ""}" style="overflow-wrap:anywhere">${esc(t.title)}</div>
-              ${t.note ? `<div class="small muted">${esc(t.note)}</div>` : ""}
+              <div class="task-title ${t.status === "done" ? "done-t" : ""}">${esc(t.title)}</div>
+              ${t.note ? `<div class="small muted task-note">${esc(t.note)}</div>` : ""}
+              <div class="task-meta"><span class="mono tn">#${esc(t.id)}</span><span aria-hidden="true">·</span>${t.owner ? `<span class="task-owner">${personAvatar(t.owner, t.owner.endsWith(AGENT_SUFFIX), 18)}<span>${esc(t.owner)}</span></span>` : "Unassigned"}</div>
             </div>
-            <span class="small muted lh" style="white-space:nowrap">${esc(t.owner || "Unassigned")}</span>
           </div>`).join("")}
       </div>`).join("") : `<div class="none">No tasks yet</div>`;
+  }
+
+  /** Shows work reported through in-progress tasks or unexpired file locks, not presence. */
+  function renderAgents() {
+    const names = [...new Set([
+      ...lastMembers.map((m) => m.agent),
+      ...lastTasks.filter((t) => t.status === "doing").map((t) => t.owner),
+      ...lastLocks.map((l) => l.owner),
+    ].filter((name) => typeof name === "string" && name.endsWith(AGENT_SUFFIX)))].sort();
+    const agents = names.map((name) => ({ name, tasks: lastTasks.filter((t) => t.status === "doing" && t.owner === name), locks: lastLocks.filter((l) => l.owner === name) }));
+    const working = agents.filter((a) => a.tasks.length || a.locks.length);
+    $("agent-count").textContent = `${working.length} working`;
+    const shown = agentView === "working" ? working : agents;
+    $("agents").innerHTML = shown.length ? shown.map((a) => `
+      <div class="row agent-row">
+        ${personAvatar(a.name, true, 24)}
+        <div><div class="agent-name">${esc(a.name)}</div>
+          ${a.tasks.map((t) => `<div class="agent-work">${esc(t.title)}</div>`).join("")}
+          ${a.locks.length ? `<div class="agent-work">${a.locks.length} ${a.locks.length === 1 ? "file locked" : "files locked"}</div>` : ""}
+          ${!a.tasks.length && !a.locks.length ? `<div class="agent-work">No work reported</div>` : ""}
+        </div>
+      </div>`).join("") : `<div class="none">${agentView === "working" ? "No agents reporting work" : "No agents have joined yet"}</div>`;
+  }
+
+  /** A stable color links each person's messages and their agent across the dashboard. */
+  function personAvatar(name, agent, size) {
+    const identity = String(name ?? "").toLowerCase().replace(/-agent$/, "");
+    let hash = 0;
+    for (const char of identity) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
+    const [background, foreground] = AVATAR_COLORS[hash % AVATAR_COLORS.length];
+    return `<span class="av ${agent ? "av-a" : "av-h"}" aria-hidden="true" style="width:${size}px;height:${size}px;font-size:${size <= 18 ? 10 : 11}px;--avatar-bg:${background};--avatar-fg:${foreground}">${agent ? AGENT_ICON : esc(initial(name))}</span>`;
   }
 
   /** Shows the activity feed, with file paths and task numbers in monospace. */
@@ -465,7 +535,7 @@
     $("suggest").innerHTML = suggestions.map((n, i) => {
       const agent = n.endsWith(AGENT_SUFFIX);
       const kind = n === EVERYONE ? "Everyone" : agent ? "Agent" : "Human";
-      return `<button class="sug${i === 0 ? " sel" : ""}" data-name="${n}"><span class="av ${agent ? "av-a" : "av-h"}" style="width:18px;height:18px;font-size:10px">${n === EVERYONE ? "@" : esc(initial(n))}</span><span>@${n}</span><span class="kind">${kind}</span></button>`;
+      return `<button class="sug${i === 0 ? " sel" : ""}" data-name="${esc(n)}">${n === EVERYONE ? `<span class="av av-h" style="width:18px;height:18px;font-size:10px">@</span>` : personAvatar(n, agent, 18)}<span>@${esc(n)}</span><span class="kind">${kind}</span></button>`;
     }).join("");
   }
 
@@ -511,8 +581,8 @@
     if (currentKey() && !isAdmin) return;
     $("pick-list").innerHTML = teamMembers.length ? teamMembers.map((n) => `
       <button class="pick" data-name="${n}">
-        <span class="av av-h" style="width:28px;height:28px;font-size:12px">${esc(initial(n))}</span>
-        <span style="display:flex;flex-direction:column;min-width:0"><span style="font-size:14px;font-weight:500">${n}</span><span class="small muted">with ${n}${AGENT_SUFFIX}</span></span>
+        ${personAvatar(n, false, 28)}
+        <span style="display:flex;flex-direction:column;min-width:0"><span style="font-size:14px;font-weight:500">${esc(n)}</span><span class="small muted">with ${esc(n)}${AGENT_SUFFIX}</span></span>
         ${n === currentName ? `<span style="margin-left:auto">${CHECK_ICON}</span>` : ""}
       </button>`).join("") : `<div class="none" style="padding:8px 12px">Nobody has joined this project yet. Run <span class="mono">agentstalk</span> in the repo to join with your GitHub name.</div>`;
     $("picker-foot").hidden = !currentName;
@@ -525,6 +595,12 @@
     writeStored(NAME_KEY, name);
     document.querySelectorAll("[data-user-name]").forEach((el) => (el.textContent = name));
     document.querySelectorAll("[data-user-initial]").forEach((el) => (el.textContent = initial(name)));
+    document.querySelectorAll("[data-user-initial]").forEach((el) => {
+      const identity = String(name ?? "").toLowerCase(); let hash = 0;
+      for (const char of identity) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
+      const [background, foreground] = AVATAR_COLORS[hash % AVATAR_COLORS.length];
+      el.style.setProperty("--avatar-bg", background); el.style.setProperty("--avatar-fg", foreground);
+    });
     $("picker").hidden = true;
     chatKey = "";
     renderChat();
