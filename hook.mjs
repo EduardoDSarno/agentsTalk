@@ -136,8 +136,7 @@ async function checkShellChanges(input) {
 
 /**
  * Runs before a command that mentions `git push`: remembers which files are
- * in commits not yet on the upstream branch, i.e. what the push would send.
- * Does nothing without an upstream branch.
+ * in commits no remote branch has yet, i.e. what the push would send.
  */
 function rememberUnpushedFiles(input) {
   const root = repoRoot(input);
@@ -147,7 +146,7 @@ function rememberUnpushedFiles(input) {
 
 /**
  * Runs after that command: frees this agent's locks only on files that were
- * waiting to be pushed and now are on the upstream branch with no local
+ * waiting to be pushed and now are on a remote branch with no local
  * changes. A failed push, a command that only mentions pushing (like an
  * echo), and files that are locked but not edited yet all keep their locks.
  */
@@ -163,10 +162,16 @@ async function releasePushedLocks(input) {
   if (pushed.length) await hub("POST", "/api/unlock", { paths: pushed });
 }
 
-/** Files in local commits that the upstream branch doesn't have yet; nothing when there is no upstream. */
+/**
+ * Files touched by local commits that no remote branch has yet. Counting
+ * against every remote branch, not only the upstream, means the first push of
+ * a new branch (`git push -u`, which has no upstream before it) is tracked too.
+ * Returns nothing outside a Git repo.
+ */
 function unpushedFiles(root) {
   try {
-    return execFileSync("git", ["diff", "--name-only", "-z", "@{upstream}..HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\0").filter(Boolean);
+    const output = execFileSync("git", ["log", "--name-only", "-z", "--format=", "HEAD", "--not", "--remotes"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return [...new Set(output.split("\0").filter(Boolean))];
   } catch {
     return undefined;
   }

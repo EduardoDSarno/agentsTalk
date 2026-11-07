@@ -7,3 +7,4 @@ snapshots/
 .env
 dist/
 *.tgz
+.claude/

@@ -87,6 +87,17 @@ test('locks are released only for files a successful git push really sent', asyn
   push('git push');
   assert.deepEqual(await lockedPaths(), ['dirty.txt', 'untouched.txt']);
 
+  // The first push of a brand new branch (git push -u, no upstream yet) releases its files too.
+  git(clone, 'checkout', '-qb', 'feature/new');
+  await call('/api/lock?branch=feature/new', { paths: ['new.txt'] });
+  assert.deepEqual(await lockedPaths(), ['dirty.txt', 'new.txt', 'untouched.txt']);
+  await fs.writeFile(path.join(clone, 'new.txt'), 'new\n');
+  git(clone, 'add', 'new.txt');
+  git(clone, 'commit', '-qm', 'add new file');
+  push('git push -u origin feature/new');
+  // new.txt is released; dirty.txt, still edited, is now locked on both branches (shell changes lock on the current branch).
+  assert.deepEqual(await lockedPaths(), ['dirty.txt', 'dirty.txt', 'untouched.txt']);
+
   // The remembered push state is kept inside .git, never in the working tree.
   assert.equal(git(clone, 'status', '--porcelain').includes('agentstalk-push'), false);
 });
