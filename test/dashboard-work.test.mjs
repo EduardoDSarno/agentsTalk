@@ -3,63 +3,92 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
+/** Loads the dashboard script against a fake page and exposes what the tests need. */
 function dashboard() {
-  const html=fs.readFileSync(new URL('../dashboard.html',import.meta.url),'utf8');
-  const code=html.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/\n\s*start\(\);\s*$/, '\n');
-  const elements=new Map();
-  const document={getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',textContent:''});return elements.get(id);}};
-  const context=vm.createContext({document,URLSearchParams,location:{search:''},localStorage:{getItem(){return null;}},console});
-  vm.runInContext(code+'\nglobalThis.testDashboard={renderTasks,renderAgents,personAvatar,setData:(members,tasks,locks,view)=>{lastMembers=members;lastTasks=tasks;lastLocks=locks;agentView=view;}};',context);
-  return {ui:context.testDashboard,elements};
+  const html = fs.readFileSync(new URL('../dashboard.html', import.meta.url), 'utf8');
+  const code = html.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/\n\s*start\(\);\s*$/, '\n');
+  const elements = new Map();
+  const document = { getElementById(id) { if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', hidden: true }); return elements.get(id); } };
+  const context = vm.createContext({ document, URLSearchParams, location: { search: '' }, localStorage: { getItem() { return null; } }, console });
+  vm.runInContext(code + '\nglobalThis.testDashboard = { renderTasks, renderLocks, renderEvents, personAvatar, open: (id) => { openTaskId = id; taskRenderKey = ""; } };', context);
+  return { ui: context.testDashboard, elements, context };
 }
 
-test('tasks show readable titles, owner identity and escaped user text',()=>{
- const {ui,elements}=dashboard();
- ui.renderTasks([{id:1,status:'doing',title:'A long task <script>alert(1)</script>',note:'Work & review',owner:'alice-agent'},{id:2,status:'todo',title:'Next',owner:''}]);
- const html=elements.get('tasks').innerHTML;
- assert.match(html,/A long task &#60;script&#62;/);
- assert.ok(!html.includes('<script>'));assert.match(html,/Work &#38; review/);
- assert.match(html,/#1/);assert.match(html,/alice-agent/);assert.match(html,/Unassigned/);
+test('tasks show readable titles, owner identity and escaped user text', () => {
+  const { ui, elements } = dashboard();
+  ui.renderTasks([{ id: 1, status: 'doing', title: 'A long task <script>alert(1)</script>', note: 'Work & review', owner: 'alice-agent' }, { id: 2, status: 'todo', title: 'Next', owner: '' }]);
+  const html = elements.get('tasks').innerHTML;
+  assert.match(html, /A long task &#60;script&#62;/);
+  assert.ok(!html.includes('<script>'));
+  assert.match(html, /Work &#38; review/);
+  assert.match(html, /#1/);
+  assert.match(html, /alice-agent/);
+  assert.match(html, /Unassigned/);
+  assert.equal(elements.get('task-count').textContent, 2);
 });
 
-test('working agents come from in-progress tasks and active locks, and all shows remaining members',()=>{
- const {ui,elements}=dashboard();
- const members=[{name:'alice',agent:'alice-agent'},{name:'bob',agent:'bob-agent'},{name:'cat',agent:'cat-agent'}];
- const tasks=[{id:1,status:'doing',title:'Build dashboard',owner:'alice-agent'},{id:2,status:'done',title:'Old task',owner:'cat-agent'}];
- const locks=[{path:'src/app.js',owner:'bob-agent'}];
- ui.setData(members,tasks,locks,'working');ui.renderAgents();
- assert.equal(elements.get('agent-count').textContent,'2 working');
- let html=elements.get('agents').innerHTML;
- assert.match(html,/alice-agent/);assert.match(html,/Build dashboard/);assert.match(html,/bob-agent/);assert.match(html,/1 file locked/);assert.ok(!html.includes('cat-agent'));
- ui.setData(members,tasks,locks,'all');ui.renderAgents();html=elements.get('agents').innerHTML;
- assert.match(html,/cat-agent/);assert.match(html,/No work reported/);assert.ok(!html.includes('Old task'));
+test('only the opened task shows its note field and actions; done tasks stay out of the count', () => {
+  const { ui, elements } = dashboard();
+  const tasks = [{ id: 1, status: 'todo', title: 'First', owner: '' }, { id: 2, status: 'todo', title: 'Second', owner: '' }, { id: 3, status: 'done', title: 'Old', owner: 'alice' }];
+  ui.renderTasks(tasks);
+  assert.ok(!elements.get('tasks').innerHTML.includes('Claim task'));
+  assert.equal(elements.get('task-count').textContent, 2);
+  ui.open(2);
+  ui.renderTasks(tasks);
+  const html = elements.get('tasks').innerHTML;
+  assert.ok(html.includes('Claim task #2'));
+  assert.ok(!html.includes('Claim task #1'));
+  assert.match(html, /aria-expanded="true"/);
 });
 
-test('an agent that reports work with set_status counts as working even without tasks or locks',()=>{
- const {ui,elements}=dashboard();
- const members=[{name:'alice',agent:'alice-agent',status:'working',doing:'reviewing the SQLite PR'},{name:'bob',agent:'bob-agent',status:'available',doing:''}];
- ui.setData(members,[],[],'working');ui.renderAgents();
- assert.equal(elements.get('agent-count').textContent,'1 working');
- const html=elements.get('agents').innerHTML;
- assert.match(html,/alice-agent/);assert.match(html,/reviewing the SQLite PR/);assert.ok(!html.includes('bob-agent'));
- // The same work is not shown twice when it comes from the agent's task.
- ui.setData([{name:'alice',agent:'alice-agent',status:'working',doing:'#1 Build dashboard'}],[{id:1,status:'doing',title:'Build dashboard',owner:'alice-agent'}],[],'working');ui.renderAgents();
- assert.equal((elements.get('agents').innerHTML.match(/Build dashboard/g)||[]).length,1);
+test('stale tasks are labelled and offer Take over, fresh tasks held by someone else offer nothing', () => {
+  const { ui, elements } = dashboard();
+  const tasks = [{ id: 1, status: 'doing', title: 'Abandoned', owner: 'bob-agent', stale: true }, { id: 2, status: 'doing', title: 'Busy', owner: 'bob-agent', stale: false }];
+  ui.open(1);
+  ui.renderTasks(tasks);
+  let html = elements.get('tasks').innerHTML;
+  const [abandoned, busy] = html.split('Busy');
+  assert.match(abandoned, /Stale/);
+  assert.match(abandoned, /Take over task #1/);
+  assert.ok(!busy.includes('Stale'));
+  ui.open(2);
+  ui.renderTasks(tasks);
+  html = elements.get('tasks').innerHTML;
+  assert.match(html, /Held by bob-agent\. Only they can move it\./);
+  assert.ok(!html.includes('Take over task #2'));
 });
 
-test('stale tasks are labelled and offer Take over, fresh tasks held by someone else offer nothing',()=>{
- const {ui,elements}=dashboard();
- ui.renderTasks([{id:1,status:'doing',title:'Abandoned',owner:'bob-agent',stale:true},{id:2,status:'doing',title:'Busy',owner:'bob-agent',stale:false}]);
- const html=elements.get('tasks').innerHTML;
- const [abandoned,busy]=html.split('Busy');
- assert.match(abandoned,/Stale/);assert.match(abandoned,/Take over/);
- assert.ok(!busy.includes('Stale'));assert.ok(!busy.includes('Take over'));
+test('locks show path, owner, branch and reason, and flag locks about to expire', () => {
+  const { ui, elements } = dashboard();
+  ui.renderLocks([{ path: 'src/a.ts', owner: 'alice-agent', branch: 'main', reason: 'adding <search>', minutesLeft: 3 }, { path: 'src/b.ts', owner: 'bob-agent', branch: '', reason: '', minutesLeft: 20 }]);
+  const html = elements.get('locks').innerHTML;
+  assert.equal(elements.get('lock-count').textContent, 2);
+  for (const text of ['src/a.ts', 'alice-agent', 'main', 'adding &#60;search&#62;', '3m', '20m']) assert.ok(html.includes(text), text);
+  assert.match(html, /warn" style="line-height:20px" aria-label="3 minutes left"/);
+  ui.renderLocks([]);
+  assert.match(elements.get('locks').innerHTML, /No files locked/);
 });
 
-test('avatars use consistent colors for a person and their agent',()=>{
- const {ui}=dashboard();
- const alice=ui.personAvatar('alice',false,24),agent=ui.personAvatar('alice-agent',true,24),bob=ui.personAvatar('bob-agent',true,24);
- const color=s=>s.match(/--avatar-bg:([^;]+)/)[1];
- assert.equal(color(alice),color(agent));assert.notEqual(color(agent),color(bob));
- assert.match(alice,/>A<\/span>/);assert.match(agent,/<svg/);
+test('the activity tab lists newest first with paths in monospace and the branch', () => {
+  const { ui, elements } = dashboard();
+  ui.renderEvents([{ at: Date.now(), agent: 'alice-agent', text: 'locked src/api.ts (adding search)', branch: 'feat/search' }]);
+  const html = elements.get('events').innerHTML;
+  assert.equal(elements.get('event-count').textContent, 1);
+  assert.match(html, /alice-agent/);
+  assert.match(html, /<span class="mono">src\/api\.ts<\/span>/);
+  assert.match(html, /on feat\/search/);
+});
+
+test('avatars use consistent colors for a person and their agent, in both themes', () => {
+  const { ui } = dashboard();
+  const alice = ui.personAvatar('alice', false, 24), agent = ui.personAvatar('alice-agent', true, 24), bob = ui.personAvatar('bob-agent', true, 24);
+  const dark = (s) => s.match(/--avatar-bg:([^;]+)/)[1];
+  const light = (s) => s.match(/--avatar-lbg:([^;]+)/)[1];
+  assert.equal(dark(alice), dark(agent));
+  assert.notEqual(dark(agent), dark(bob));
+  assert.equal(light(alice), alice.match(/--avatar-fg:([^;]+)/)[1], 'light mode swaps the pair');
+  assert.match(alice, />A<\/span>/);
+  assert.match(agent, /<svg/);
+  assert.match(agent, /av-a/);
+  assert.match(alice, /av-h/);
 });

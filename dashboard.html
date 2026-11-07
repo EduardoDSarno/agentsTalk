@@ -5,242 +5,245 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>agentsTalk</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-  body { margin: 0; }
-  .hub { --bg:#111111; --hover:#191919; --active:#222222; --line:#2a2a2a; --border:#313131; --border-strong:#484848; --icon:#6e6e6e; --fg2:#b4b4b4; --fg:#eeeeee; --acc:#3e63dd; --acc-fg:#9eb1ff; --acc-soft:rgba(62,99,221,.16); --me-row:rgba(62,99,221,.07); --warn:#ffca16; --warn-soft:rgba(255,202,22,.08); --ok:#30a46c; --pop:#191919; --shadow:0 8px 30px rgba(0,0,0,.5); }
-  .hub.light { --bg:#fcfcfc; --hover:#f0f0f0; --active:#e8e8e8; --line:#e8e8e8; --border:#d9d9d9; --border-strong:#bbbbbb; --icon:#8d8d8d; --fg2:#646464; --fg:#202020; --acc-fg:#3a5bc7; --acc-soft:rgba(62,99,221,.12); --me-row:rgba(62,99,221,.06); --warn:#ab6400; --warn-soft:rgba(255,197,61,.16); --pop:#ffffff; --shadow:0 8px 30px rgba(0,0,0,.12); }
-  .hub { position: relative; height: 100vh; min-height: 600px; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 13px/1.5 'Inter', system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
-  .hub * { box-sizing: border-box; }
-  .hub button { font: inherit; color: inherit; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
-  .hub button:disabled { cursor: default; }
-  .hub :focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; border-radius: 6px; }
-  .hub [hidden] { display: none !important; }
-  .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; letter-spacing: -.01em; }
-  .tn { font-variant-numeric: tabular-nums; }
-  .muted { color: var(--fg2); }
-  .small { font-size: 12px; }
-  .ghost { height: 28px; display: inline-flex; align-items: center; gap: 7px; border-radius: 6px; }
-  .ghost:hover { background: var(--hover); }
-  .icon-btn { width: 28px; justify-content: center; color: var(--fg2); }
-  .user-btn { padding: 0 8px 0 4px; font-weight: 500; }
-  .av { display: inline-flex; align-items: center; justify-content: center; flex: none; font-weight: 500; line-height: 1; background: var(--avatar-bg, var(--active)); color: var(--avatar-fg, var(--fg)); }
-  .av-h { border-radius: 50%; }
-  .av-a { border-radius: 5px; }
-  .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
-  .dot-live { background: var(--ok); }
-  .dot-off { background: var(--warn); }
-  .soon { color: var(--warn) !important; }
+body { margin: 0; }
+.hub { position: relative; background: var(--side); color: var(--fg); font: 13px/1.5 'Inter', system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; color-scheme: dark; --side:#111111; --side-hover:#1c1c1c; --panel:#191919; --hover:#222222; --active:#2a2a2a; --line:#2a2a2a; --border:#313131; --border-strong:#484848; --icon:#7b7b7b; --fg2:#b4b4b4; --fg:#eeeeee; --acc:#3e63dd; --acc-fg:#9eb1ff; --acc-soft:rgba(62,99,221,0.20); --me:rgba(62,99,221,0.10); --warn:#ffca16; --warn-soft:rgba(255,202,22,0.10); --ok:#3dd68c; --human-box:#222222; --pop:#222222; --shadow:0 8px 30px rgba(0,0,0,0.5); }
+.hub.light { color-scheme: light; --side:#f5f5f5; --side-hover:#e8e8e8; --panel:#ffffff; --hover:#f5f5f5; --active:#ececec; --line:#e8e8e8; --border:#dcdcdc; --border-strong:#bbbbbb; --icon:#8d8d8d; --fg2:#646464; --fg:#202020; --acc-fg:#3a5bc7; --acc-soft:rgba(62,99,221,0.12); --me:rgba(62,99,221,0.06); --warn:#ab6400; --warn-soft:rgba(255,197,61,0.18); --ok:#218358; --human-box:#f2f2f2; --pop:#ffffff; --shadow:0 8px 30px rgba(0,0,0,0.12); }
+.hub * { box-sizing: border-box; }
+.hub [hidden] { display: none !important; }
+.hub button { font: inherit; color: inherit; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+.hub button:disabled { cursor: default; opacity: .5; }
+.hub :focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; border-radius: 6px; }
+.hub .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; letter-spacing: -0.01em; }
+.hub .tn { font-variant-numeric: tabular-nums; }
+.hub .mut { color: var(--fg2); }
+.hub .sm { font-size: 12px; }
+.hub .clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub .ghost:hover { background: var(--hover); }
+.hub .av { display: inline-flex; align-items: center; justify-content: center; flex: none; font-weight: 500; line-height: 1; background: var(--avatar-bg, var(--active)); color: var(--avatar-fg, var(--fg)); }
+.hub.light .av { background: var(--avatar-lbg, var(--active)); color: var(--avatar-lfg, var(--fg)); }
+.hub .av-h { border-radius: 50%; }
+.hub .av-a { border-radius: 6px; }
 
-  header { flex: none; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  header h1 { margin: 0; font-size: 13px; font-weight: 500; }
-  .team-size { margin-left: 4px; }
-  .project-select { height: 28px; max-width: 220px; padding: 0 6px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--fg); font: inherit; font-weight: 500; cursor: pointer; }
-  .project-select:hover { background: var(--hover); border-color: var(--border); }
-  .project-select option { background: var(--pop); color: var(--fg); }
-  .conn { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; font-size: 12px; }
-  .spacer { flex: 1; }
-  @media (max-width: 560px) { .team-size, .crumb { display: none; } }
+.hub .shell { display: flex; height: 100vh; min-height: 620px; }
+.hub .side { flex: 0 0 252px; min-width: 0; display: flex; flex-direction: column; background: var(--side); overflow-y: auto; }
+.hub .panel { flex: 1; min-width: 0; display: flex; margin: 8px 8px 8px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.hub .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.hub .insp { flex: 0 0 360px; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); }
+@media (max-width: 900px) {
+  .hub .shell { flex-direction: column; height: auto; }
+  .hub .panel { order: 1; flex-direction: column; margin: 0; border: 0; border-radius: 0; }
+  .hub .side { order: 2; flex: none; }
+  .hub .chat { height: 100vh; }
+  .hub .insp { flex: none; border-left: 0; border-top: 1px solid var(--line); }
+}
 
-  .body { flex: 1; min-height: 0; display: flex; flex-wrap: wrap; align-items: flex-start; overflow-y: auto; }
-  main { flex: 999 1 560px; min-width: 0; height: calc(100vh - 44px); min-height: 520px; display: flex; flex-direction: column; }
-  .banner { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--warn-soft); border-bottom: 1px solid var(--line); font-size: 12.5px; }
-  .scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column-reverse; }
-  .column { width: 100%; max-width: 860px; margin: 0 auto; }
-  #chat { display: flex; flex-direction: column; padding: 12px 16px 16px; }
-  .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 24px; text-align: center; }
-  .day { display: flex; align-items: center; gap: 10px; padding: 4px 12px 0; font-size: 12px; font-weight: 500; color: var(--fg2); }
-  .day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-  .msg { display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 12px; padding: 3px 12px; border-radius: 6px; }
-  .msg.head { margin-top: 12px; padding-top: 6px; }
-  .msg.is-me { background: var(--me-row); }
-  .msg:hover { background: var(--hover); }
-  .msg-meta { display: flex; align-items: baseline; flex-wrap: wrap; column-gap: 6px; line-height: 20px; }
-  .msg-text { font-size: 13.5px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
-  .ht { opacity: 0; display: block; padding-top: 2px; font-size: 10.5px; color: var(--fg2); white-space: nowrap; margin-left: -3px; }
-  .msg:hover .ht { opacity: 1; }
-  .m { color: var(--acc-fg); font-weight: 500; }
-  .m-me { background: var(--acc-soft); border-radius: 4px; padding: 0 3px; }
+.hub .brand { flex: none; height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 16px; }
+.hub .selects { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 12px; }
+.hub .selects label { display: flex; flex-direction: column; gap: 3px; }
+.hub .sel { width: 100%; height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--side); color: var(--fg); font: inherit; }
+.hub .side-h { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; margin-top: 6px; font-size: 12px; font-weight: 500; color: var(--fg2); }
+.hub .mem { display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: 10px; padding: 5px 8px; border-radius: 6px; }
+.hub .mem:hover { background: var(--side-hover); }
+.hub .mem.sub { margin-left: 14px; }
+.hub .l1 { display: flex; align-items: center; gap: 6px; line-height: 20px; min-width: 0; }
+.hub .l2 { font-size: 12px; color: var(--fg2); line-height: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub .st { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.hub .st-working { background: var(--acc-fg); }
+.hub .st-available { background: var(--ok); }
+.hub .st-away { box-shadow: inset 0 0 0 1.5px var(--icon); }
+.hub .me-box { flex: none; padding: 8px; border-top: 1px solid var(--line); }
+.hub .icon-btn { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--fg2); }
 
-  .composer-wrap { flex: none; padding: 0 16px 16px; }
-  .composer-box { position: relative; }
-  .composer { border: 1px solid var(--border); border-radius: 8px; background: var(--hover); }
-  .composer:focus-within { border-color: var(--border-strong); }
-  textarea { display: block; width: 100%; border: 0; outline: none; resize: none; background: transparent; color: var(--fg); font: inherit; font-size: 13.5px; line-height: 1.55; padding: 10px 12px 2px; }
-  textarea::placeholder { color: var(--fg2); }
-  .composer-bar { display: flex; align-items: center; gap: 8px; padding: 4px 6px 6px; }
-  .composer-bar .user-btn { color: var(--fg2); font-weight: 400; gap: 6px; }
-  .hints { flex: 1; min-width: 0; display: flex; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap; font-size: 12px; color: var(--fg2); }
-  kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; font: inherit; font-size: 11px; color: var(--fg2); }
-  .send { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; background: var(--acc) !important; color: #fff !important; }
-  .send:disabled { background: transparent !important; color: var(--icon) !important; }
-  .send:not(:disabled):hover { filter: brightness(1.12); }
-  .pop { position: absolute; left: 0; bottom: calc(100% + 6px); width: 260px; max-width: 100%; padding: 4px; background: var(--pop); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); z-index: 5; }
-  .sug { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 8px; border-radius: 5px; }
-  .sug:hover, .sug.sel { background: var(--active); }
-  .sug .kind { margin-left: auto; font-size: 12px; color: var(--fg2); }
+.hub .chat-h { flex: none; height: 48px; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 20px; border-bottom: 1px solid var(--line); }
+.hub .scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column-reverse; }
+.hub .tl { width: 100%; max-width: 780px; margin: 0 auto; padding: 4px 24px 24px; display: flex; flex-direction: column; }
+.hub .day { display: flex; align-items: center; gap: 10px; margin: 16px 0 0; font-size: 12px; font-weight: 500; color: var(--fg2); }
+.hub .day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.hub .mrow { display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 12px; }
+.hub .mrow.head { margin-top: 18px; }
+.hub .mrow.cont { margin-top: 4px; }
+.hub .hbox { background: var(--human-box); border-radius: 10px; padding: 8px 12px 9px; }
+.hub .hbox.me { box-shadow: inset 0 0 0 1px var(--acc); }
+.hub .abody.me { background: var(--me); border-radius: 8px; margin: -4px -8px; padding: 4px 8px; }
+.hub .mh { display: flex; align-items: baseline; gap: 6px; line-height: 20px; margin-bottom: 2px; }
+.hub .mt { font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.hub .m { color: var(--acc-fg); font-weight: 500; }
+.hub .m-me { background: var(--acc-soft); border-radius: 4px; padding: 0 3px; }
+.hub .ev { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; column-gap: 12px; margin-top: 8px; font-size: 12.5px; line-height: 20px; color: var(--fg2); }
+.hub .ev-ic { display: flex; justify-content: center; padding-top: 3px; color: var(--icon); }
+.hub .ev-t { display: flex; flex-wrap: wrap; column-gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.hub .strong { font-weight: 500; color: var(--fg); }
+.hub .banner { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 20px; background: var(--warn-soft); border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.hub .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.hub .warn { color: var(--warn); }
+.hub .toggle { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 6px; font-size: 12px; color: var(--fg2); }
+.hub .toggle:hover { background: var(--hover); }
+.hub .sw { width: 24px; height: 14px; border-radius: 999px; background: var(--border); position: relative; flex: none; }
+.hub .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--fg2); }
+.hub .sw.on { background: var(--acc); }
+.hub .sw.on::after { left: 12px; background: #ffffff; }
+.hub .empty { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 24px; text-align: center; }
 
-  aside { flex: 1 1 320px; min-width: 0; max-width: 380px; max-height: calc(100vh - 44px); overflow-y: auto; border-left: 1px solid var(--line); }
-  @media (max-width: 900px) { aside { max-width: none; max-height: none; border-left: 0; border-top: 1px solid var(--line); } }
-  aside section { padding: 4px 0 10px; border-bottom: 1px solid var(--line); }
-  aside section:last-child { border-bottom: 0; }
-  .sec-head { display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 16px; }
-  .sec-head h2 { margin: 0; font-size: 12px; font-weight: 500; }
-  .none { padding: 2px 16px 4px; color: var(--fg2); }
-  .row { padding: 5px 16px; column-gap: 10px; display: grid; }
-  .row:hover { background: var(--hover); }
-  .lock-row { grid-template-columns: 14px minmax(0, 1fr) auto; }
-  .task-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-  .task-button { padding: 3px 8px !important; border: 1px solid var(--border) !important; border-radius: 5px; font-size: 12px !important; }
-  .task-button:not(:disabled):hover { background: var(--active); }
-  .task-button:disabled { opacity: .45; }
-  .task-form { display: flex; gap: 6px; padding: 0 16px 10px; }
-  .task-input { min-width: 0; width: 100%; border: 1px solid var(--border); border-radius: 5px; background: var(--hover); color: var(--fg); padding: 5px 7px; font: inherit; font-size: 12px; }
-  .task-note-field { display: block; margin-top: 6px; font-size: 12px; color: var(--fg2); }
-  .task-error { padding: 0 16px 8px; color: var(--warn); font-size: 12px; }
-  .member-row { display: flex; align-items: flex-start; gap: 9px; padding: 8px 16px; }
-  .member-row > .dot { margin-top: 7px; }
-  .member-main { min-width: 0; flex: 1; }
-  .member-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-  .member-name { overflow-wrap: anywhere; font-weight: 500; }
-  .member-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; color: var(--fg2); }
-  .member-doing { margin: 3px 0; overflow-wrap: anywhere; }
-  .status-working { background: var(--acc-fg); }
-  .status-available { background: var(--ok); }
-  .status-away { background: var(--icon); }
-  .human-presence { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--line); }
-  .human-presence .dot { display: inline-block; margin-right: 4px; vertical-align: middle; }
-  .presence-form { margin: 0 16px 8px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
-  .presence-form label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--fg2); }
-  .presence-fields { display: flex; flex-wrap: wrap; gap: 6px; }
-  .presence-fields input { flex: 1 1 140px; min-width: 0; }
-  .presence-fields input, .presence-fields select { border: 1px solid var(--border); border-radius: 5px; background: var(--hover); color: var(--fg); padding: 5px 6px; font: inherit; font-size: 12px; }
-  .presence-fields button { padding: 4px 8px; border: 1px solid var(--border); border-radius: 5px; }
-  .presence-fields button:disabled { opacity: .45; }
-  .presence-feedback { font-size: 12px; margin-top: 4px; color: var(--fg2); }
-  .task-row { grid-template-columns: 16px minmax(0, 1fr); align-items: start; column-gap: 9px; padding-top: 8px; padding-bottom: 8px; }
-  .task-title { overflow-wrap: anywhere; line-height: 1.45; }
-  .task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; color: var(--fg2); font-size: 12px; }
-  .task-owner { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
-  .task-note { margin-top: 4px; overflow-wrap: anywhere; }
-  .agent-tabs { display: flex; gap: 4px; padding: 0 12px 8px; }
-  .agent-tab { padding: 4px 8px !important; color: var(--fg2) !important; border-radius: 5px; }
-  .agent-tab[aria-selected="true"] { color: var(--fg) !important; background: var(--active) !important; }
-  .agent-row { grid-template-columns: 24px minmax(0, 1fr); align-items: start; padding-top: 8px; padding-bottom: 8px; }
-  .agent-name { font-weight: 500; overflow-wrap: anywhere; }
-  .agent-work { color: var(--fg2); overflow-wrap: anywhere; }
-  .agent-status-hint { padding: 0 16px 6px; color: var(--fg2); font-size: 11px; }
-  .event-row { grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; }
-  .clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .lh { line-height: 20px; }
-  .group-label { display: flex; gap: 6px; padding: 4px 16px 2px; font-size: 12px; color: var(--fg2); }
-  .done-t { color: var(--fg2); }
-  .event-line { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 4px; line-height: 20px; overflow-wrap: anywhere; }
+.hub .composer-wrap { flex: none; width: 100%; max-width: 780px; margin: 0 auto; padding: 0 24px 20px; }
+.hub .composer { border: 1px solid var(--border); border-radius: 12px; background: var(--hover); }
+.hub .composer:focus-within { border-color: var(--border-strong); }
+.hub textarea { display: block; width: 100%; border: 0; outline: none; resize: none; background: transparent; color: var(--fg); font: inherit; font-size: 14px; line-height: 1.55; padding: 12px 14px 2px; }
+.hub textarea:focus-visible { outline: none; }
+.hub textarea::placeholder { color: var(--fg2); }
+.hub kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; font: inherit; font-size: 11px; color: var(--fg2); }
+.hub .send { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; background: var(--acc); color: #ffffff; }
+.hub .send:disabled { background: transparent; color: var(--icon); opacity: 1; }
+.hub .pop { position: absolute; left: 0; bottom: calc(100% + 6px); width: 260px; max-width: 100%; padding: 4px; background: var(--pop); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); z-index: 5; }
+.hub .sug { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 8px; border-radius: 5px; }
+.hub .sug:hover, .hub .sug.sel { background: var(--active); }
+.hub .sug .kind { margin-left: auto; font-size: 12px; color: var(--fg2); }
 
-  .overlay { position: absolute; inset: 0; z-index: 20; display: flex; align-items: flex-start; justify-content: center; padding: 16vh 16px 16px; background: rgba(0,0,0,.5); }
-  .dialog { width: 100%; max-width: 400px; background: var(--pop); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
-  .dialog-head { padding: 18px 18px 10px; }
-  .dialog-head h2 { margin: 0 0 4px; font-size: 15px; font-weight: 500; }
-  .dialog-head p { margin: 0; color: var(--fg2); }
-  #pick-list { display: flex; flex-direction: column; padding: 4px 6px 6px; }
-  .pick { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 8px 12px; border-radius: 8px; }
-  .pick:hover { background: var(--active); }
-  .dialog-foot { display: flex; justify-content: flex-end; padding: 8px 12px; border-top: 1px solid var(--line); }
-  .dialog-foot button { height: 28px; padding: 0 10px; color: var(--fg2); }
-  .hub ::-webkit-scrollbar { width: 10px; height: 10px; }
-  .hub ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
-  @media (pointer: coarse) { .ghost, .send, .sug { min-height: 44px; min-width: 44px; } }
+.hub .tabs { flex: none; height: 48px; display: flex; align-items: center; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+.hub .tab { height: 28px; padding: 0 10px; border-radius: 6px; display: inline-flex; align-items: center; gap: 6px; font-weight: 500; color: var(--fg2); }
+.hub .tab:hover { color: var(--fg); }
+.hub .tab.on { background: var(--active); color: var(--fg); }
+.hub .tab .c { font-size: 12px; font-weight: 400; color: var(--fg2); }
+.hub .ibody { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0 16px; }
+.hub .grp { display: flex; align-items: center; gap: 6px; padding: 14px 16px 4px; font-size: 12px; font-weight: 500; color: var(--fg2); }
+.hub .trow { display: grid; grid-template-columns: 14px minmax(0, 1fr); column-gap: 10px; width: 100%; padding: 7px 16px; }
+.hub .trow:hover { background: var(--hover); }
+.hub .tcard.open { background: var(--hover); }
+.hub .tdetail { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 12px 40px; }
+.hub .inp { width: 100%; height: 30px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--fg); font: inherit; }
+.hub .inp:focus { outline: none; border-color: var(--border-strong); }
+.hub .inp::placeholder { color: var(--fg2); }
+.hub .sbtn { height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); font-weight: 500; }
+.hub .sbtn:hover { background: var(--active); }
+.hub .lrow { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 10px; padding: 8px 16px; }
+.hub .lrow:hover, .hub .arow:hover { background: var(--hover); }
+.hub .arow { display: grid; grid-template-columns: 40px minmax(0, 1fr); column-gap: 8px; padding: 6px 16px; line-height: 20px; }
+.hub .none { padding: 12px 16px; color: var(--fg2); }
+
+.hub .overlay { position: absolute; inset: 0; z-index: 20; display: flex; align-items: flex-start; justify-content: center; padding: 16vh 16px 16px; background: rgba(0, 0, 0, 0.5); }
+.hub .dialog { width: 100%; max-width: 400px; background: var(--pop); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+.hub .dialog-head { padding: 18px 18px 10px; }
+.hub .dialog-head h2 { margin: 0 0 4px; font-size: 15px; font-weight: 500; }
+.hub .dialog-head p { margin: 0; color: var(--fg2); }
+.hub .pick { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 8px 12px; border-radius: 8px; }
+.hub .pick:hover { background: var(--active); }
+.hub ::-webkit-scrollbar { width: 10px; height: 10px; }
+.hub ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
+@media (pointer: coarse) { .hub .ghost, .hub .send, .hub .sug, .hub .tab, .hub .sbtn { min-height: 44px; } }
 </style>
 </head>
 <body>
 <div class="hub" id="hub">
-  <header>
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" style="fill:var(--fg)"/><g style="stroke:var(--bg);fill:var(--bg)"><path d="M8 8.5l4 3.5M16 8.5L12 12M12 12v4.5" fill="none" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="8" r="1.9" stroke="none"/><circle cx="16" cy="8" r="1.9" stroke="none"/><circle cx="12" cy="17" r="1.9" stroke="none"/></g></svg>
-    <span style="font-weight:500">agentsTalk</span>
-    <span class="crumb" aria-hidden="true" style="color:var(--icon)">/</span>
-    <h1 class="crumb" style="display:flex"><select id="project" class="project-select" aria-label="Project"></select></h1>
-    <select id="branch" class="project-select crumb" aria-label="Branch filter for locks and activity" style="font-weight:400;color:var(--fg2)"></select>
-    <span class="muted team-size" id="team-size"></span>
-    <div class="spacer"></div>
-    <span role="status" class="conn" id="conn"><span class="dot dot-live"></span>Live</span>
-    <button class="ghost icon-btn" id="theme-btn"></button>
-    <button class="ghost user-btn" data-open-picker><span class="av av-h" style="width:20px;height:20px;font-size:10.5px" data-user-initial></span><span data-user-name></span></button>
-  </header>
+  <div class="shell">
 
-  <div class="body">
-    <main>
-      <div class="banner" role="alert" id="offline" hidden>
-        <span class="dot dot-off"></span>
-        <span><span style="font-weight:500">Hub offline.</span> <span class="muted">Retrying automatically. Sending is paused until it reconnects.</span></span>
+    <!-- Sidebar: project, branch, team (people with their agents), you -->
+    <nav class="side" aria-label="Project and team">
+      <div class="brand">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" style="flex:none"><rect width="24" height="24" rx="6" style="fill:var(--fg)"/><g style="stroke:var(--side);fill:var(--side)"><path d="M8 8.5l4 3.5M16 8.5L12 12M12 12v4.5" fill="none" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="8" r="1.9" stroke="none"/><circle cx="16" cy="8" r="1.9" stroke="none"/><circle cx="12" cy="17" r="1.9" stroke="none"/></g></svg>
+        <span style="font-weight:600">agentsTalk</span>
+        <div style="flex:1"></div>
+        <span role="status" class="sm mut" id="conn" style="display:inline-flex;align-items:center;gap:6px"><span class="dot" style="background:var(--ok)"></span>Live</span>
       </div>
-      <div class="banner" role="alert" id="signed-out" hidden>
-        <span class="dot dot-off"></span>
-        <span><span style="font-weight:500">Not signed in.</span> <span class="muted">Run <span class="mono">node agentstalk</span> in your team's repo and open the personal dashboard link it prints.</span></span>
+      <div class="selects">
+        <label><span class="sm mut" style="padding-left:2px">Project</span><select class="sel" id="project" aria-label="Project"></select></label>
+        <label><span class="sm mut" style="padding-left:2px">Branch (locks and activity)</span><select class="sel" id="branch" aria-label="Branch filter for locks and activity"></select></label>
       </div>
-      <div class="scroll" id="chat-scroll"><div class="column" id="chat"></div></div>
-      <div class="empty" id="chat-empty" hidden>
-        <div style="font-weight:500">No messages yet</div>
-        <div class="muted">Type @ to pick a teammate, or @all for everyone.</div>
+      <div style="padding:4px 4px 8px;border-top:1px solid var(--line)">
+        <div class="side-h">Team<span class="tn" style="font-weight:400" id="member-count"></span></div>
+        <div id="members"></div>
       </div>
-      <div class="composer-wrap column">
-        <div class="composer-box">
-          <div class="pop" id="suggest" role="listbox" aria-label="Mention suggestions" hidden></div>
-          <div class="composer">
-            <textarea id="draft" rows="2" aria-label="Message" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false" placeholder="Message… use @name to address an agent, @all for everyone"></textarea>
-            <div class="composer-bar">
-              <button class="ghost user-btn" data-open-picker><span class="av av-h" style="width:18px;height:18px;font-size:10px" data-user-initial></span><span data-user-name></span></button>
-              <span class="hints"><kbd>↵</kbd>send<kbd style="margin-left:6px">⇧↵</kbd>new line</span>
-              <span class="tn small muted" id="count" hidden></span>
-              <button class="send" id="send" aria-label="Send message" disabled>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5"/></svg>
-              </button>
+      <div style="flex:1"></div>
+      <div class="me-box">
+        <form id="presence-form" aria-label="Your presence" hidden style="display:flex;flex-direction:column;gap:6px;padding:6px 4px 10px">
+          <label class="sm mut" for="presence-status">Your status</label>
+          <select class="sel" id="presence-status" disabled>
+            <option value="available">Available</option>
+            <option value="working">Working</option>
+            <option value="away">Away</option>
+          </select>
+          <input class="inp" id="presence-doing" style="background:var(--side)" aria-label="What you are doing" placeholder="What are you doing?" maxlength="120" disabled>
+          <div style="display:flex;gap:6px;justify-content:flex-end">
+            <button class="sbtn" type="button" id="presence-cancel" style="background:var(--side)">Cancel</button>
+            <button class="sbtn" type="submit" id="presence-save" style="background:var(--acc);border-color:var(--acc);color:#ffffff" disabled>Save</button>
+          </div>
+        </form>
+        <div class="sm mut" id="presence-feedback" role="status" aria-live="polite" style="padding:0 8px 4px"></div>
+        <div style="display:flex;align-items:center;gap:4px">
+          <button class="ghost" data-open-picker aria-label="Switch user" style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:40px;padding:0 8px;border-radius:6px">
+            <span class="av av-h" style="width:24px;height:24px;font-size:11px" data-user-initial></span>
+            <span style="display:flex;flex-direction:column;min-width:0;line-height:16px">
+              <span style="font-weight:500" data-user-name></span>
+              <span class="sm mut clip" id="user-status"></span>
+            </span>
+          </button>
+          <button class="ghost icon-btn" id="presence-edit" aria-label="Set your status" disabled>
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 2.5l3 3L6 13H3v-3z"/></svg>
+          </button>
+          <button class="ghost icon-btn" id="theme-btn"></button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="panel">
+
+      <!-- Chat: messages and activity in one timeline -->
+      <main class="chat">
+        <div class="chat-h">
+          <h1 style="margin:0;font-size:14px;font-weight:500">Team chat</h1>
+          <span class="sm mut" id="team-size"></span>
+          <div style="flex:1"></div>
+          <button class="toggle" id="activity-toggle" aria-pressed="true"><span class="sw on" aria-hidden="true"></span>Show activity</button>
+        </div>
+        <div class="banner" role="alert" id="signed-out" hidden>
+          <span class="dot" style="background:var(--warn)"></span>
+          <span><span style="font-weight:500">Not signed in.</span> <span class="mut">Run <span class="mono">node agentstalk</span> in your team's repo and open the personal dashboard link it prints.</span></span>
+        </div>
+        <div class="banner" role="alert" id="offline" hidden>
+          <span class="dot" style="background:var(--warn)"></span>
+          <span><span style="font-weight:500">Hub offline.</span> <span class="mut">Retrying automatically. Sending is paused until it reconnects.</span></span>
+        </div>
+        <div class="scroll" id="chat-scroll"><div class="tl" id="chat"></div></div>
+        <div class="empty" id="chat-empty" hidden>
+          <div style="font-weight:500">No messages yet</div>
+          <div class="mut">Type @ to pick a teammate, or @all for everyone.</div>
+        </div>
+        <div class="composer-wrap">
+          <div style="position:relative">
+            <div class="pop" id="suggest" role="listbox" aria-label="Mention suggestions" hidden></div>
+            <div class="composer">
+              <textarea id="draft" rows="2" aria-label="Message" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false" placeholder="Message… use @name to address an agent, @all for everyone"></textarea>
+              <div style="display:flex;align-items:center;gap:8px;padding:4px 8px 8px 12px">
+                <span class="sm mut clip" style="flex:1;min-width:0;display:flex;align-items:center;gap:5px"><kbd>↵</kbd>send<kbd style="margin-left:6px">⇧↵</kbd>new line<kbd style="margin-left:6px">@</kbd>mention</span>
+                <span class="tn sm mut" id="count" hidden></span>
+                <button class="send" id="send" aria-label="Send message" disabled>
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5"/></svg>
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    </main>
+      </main>
 
-    <aside aria-label="Hub details">
-      <section aria-labelledby="team-title">
-        <div class="sec-head"><h2 id="team-title">Team</h2><span class="tn small muted" id="member-count"></span></div>
-        <form class="presence-form" id="presence-form" aria-label="Your presence" hidden>
-          <label for="presence-status">Your status</label>
-          <div class="presence-fields">
-            <select id="presence-status" aria-label="Your status" disabled><option value="available">Available</option><option value="working">Working</option><option value="away">Away</option></select>
-            <input id="presence-doing" aria-label="What you are doing" placeholder="What are you doing?" maxlength="120" disabled>
-            <button id="presence-save" type="submit" disabled>Save</button>
-          </div>
-          <div class="presence-feedback" id="presence-feedback" role="status" aria-live="polite"></div>
-        </form>
-        <div id="members"></div>
-      </section>
-      <section>
-        <div class="sec-head"><h2>Locked files</h2><span class="tn small muted" id="lock-count"></span></div>
-        <div id="locks"></div>
-      </section>
-      <section>
-        <div class="sec-head"><h2>Tasks</h2><span class="tn small muted" id="task-count"></span></div>
-        <form class="task-form" id="task-form">
-          <input class="task-input" id="task-title" aria-label="New task title" placeholder="Add a task…" required disabled>
-          <button class="task-button" id="task-add" type="submit" disabled>Add</button>
-        </form>
-        <div class="task-error" id="task-error" role="alert" hidden></div>
-        <div id="tasks"></div>
-      </section>
-      <section>
-        <div class="sec-head"><h2>Agents</h2><span class="tn small muted" id="agent-count"></span></div>
-        <div class="agent-tabs" role="tablist" aria-label="Agent work status">
-          <button class="agent-tab" id="agents-working-tab" role="tab" aria-selected="true" aria-controls="agents" data-agent-view="working">Working</button>
-          <button class="agent-tab" id="agents-all-tab" role="tab" aria-selected="false" aria-controls="agents" data-agent-view="all" tabindex="-1">All agents</button>
+      <!-- Inspector: one list at a time -->
+      <aside class="insp" aria-label="Tasks, locks and activity">
+        <div class="tabs" role="tablist">
+          <button class="tab on" role="tab" id="tab-tasks" data-tab="tasks" aria-selected="true">Tasks<span class="c tn" id="task-count"></span></button>
+          <button class="tab" role="tab" id="tab-locks" data-tab="locks" aria-selected="false">Locks<span class="c tn" id="lock-count"></span></button>
+          <button class="tab" role="tab" id="tab-activity" data-tab="activity" aria-selected="false">Activity<span class="c tn" id="event-count"></span></button>
         </div>
-        <div class="agent-status-hint">Based on assigned tasks and file locks</div>
-        <div id="agents" role="tabpanel" aria-labelledby="agents-working-tab"></div>
-      </section>
-      <section>
-        <div class="sec-head"><h2>Activity</h2></div>
-        <div id="events"></div>
-      </section>
-    </aside>
+        <div class="ibody" role="tabpanel" id="panel-tasks">
+          <form id="task-form" style="display:flex;gap:6px;padding:8px 16px 4px">
+            <input class="inp" id="task-title" aria-label="New task title" placeholder="Add a task…" required disabled>
+            <button class="sbtn" id="task-add" type="submit" disabled>Add</button>
+          </form>
+          <div class="sm warn" id="task-error" role="alert" style="padding:4px 16px 0" hidden></div>
+          <div id="tasks"></div>
+        </div>
+        <div class="ibody" role="tabpanel" id="panel-locks" hidden><div id="locks"></div></div>
+        <div class="ibody" role="tabpanel" id="panel-activity" hidden><div id="events"></div></div>
+      </aside>
+    </div>
   </div>
 
   <div class="overlay" id="picker" hidden>
@@ -249,8 +252,8 @@
         <h2 id="who-title">Who are you?</h2>
         <p>The hub uses this to highlight messages that mention you. This browser will remember it.</p>
       </div>
-      <div id="pick-list"></div>
-      <div class="dialog-foot" id="picker-foot"><button class="ghost" id="picker-cancel">Cancel</button></div>
+      <div style="display:flex;flex-direction:column;padding:4px 6px 6px" id="pick-list"></div>
+      <div style="display:flex;justify-content:flex-end;padding:8px 12px;border-top:1px solid var(--line)" id="picker-foot"><button class="ghost" id="picker-cancel" style="height:28px;padding:0 10px;border-radius:6px;color:var(--fg2)">Cancel</button></div>
     </div>
   </div>
 </div>
@@ -265,6 +268,8 @@
   const GROUP_WINDOW_MS = 5 * 60_000;
   const NAME_KEY = "agent-hub-name";
   const THEME_KEY = "agent-hub-theme";
+  const ACTIVITY_KEY = "agent-hub-activity";
+  const STATUS_LABELS = { working: "Working", available: "Available", away: "Away" };
   const TASK_GROUPS = [["doing", "In progress"], ["blocked", "Blocked"], ["todo", "Todo"], ["done", "Done"]];
   const AVATAR_COLORS = [["#503567", "#f3d7ff"], ["#24515c", "#c8f5ff"], ["#5b3e27", "#ffe5c4"], ["#344c33", "#d8f8cb"], ["#503543", "#ffdae9"], ["#293e68", "#d5e3ff"], ["#555127", "#faf1bd"], ["#36504b", "#caf9e9"], ["#5a3840", "#ffdee0"], ["#403d70", "#dedbff"], ["#30505f", "#ccecff"], ["#4f4936", "#f6e9c5"]];
   // The project's people (from their GitHub names) and everyone @mentionable; filled from the hub.
@@ -282,10 +287,12 @@
   let currentName = readStored(NAME_KEY);
   // Which branch's locks and activity to show; "" shows all branches.
   let branchFilter = "";
+  let showActivity = readStored(ACTIVITY_KEY) !== "off";
+  let activeTab = "tasks";
+  let openTaskId = null;
   let lastLocks = [];
   let lastEvents = [];
   let lastMembers = [];
-  let agentView = "working";
   let offline = false;
   let lastMessages = [];
   let chatKey = "";
@@ -296,13 +303,14 @@
   let presenceIdentity = "";
   let presenceDirty = false;
   let presenceBusy = false;
+  let presenceEditing = false;
   let suggestions = [];
   let selectedSuggestion = 0;
   let suggestionsDismissed = false;
 
   /**
-   * Sets up theme, sign-in, user picker and composer, then keeps the page in
-   * sync with the hub. Runs once, at the end of this script.
+   * Sets up theme, sign-in, user picker, composer, tabs and forms, then keeps
+   * the page in sync with the hub. Runs once, at the end of this script.
    */
   async function start() {
     applyTheme(readStored(THEME_KEY) || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
@@ -319,27 +327,14 @@
     setUpComposer();
     setUpTasks();
     setUpPresence();
+    setUpTabs();
     $("theme-btn").addEventListener("click", () => applyTheme($("hub").classList.contains("light") ? "dark" : "light"));
     $("project").addEventListener("change", (event) => switchProject(event.target.value));
     $("branch").addEventListener("change", (event) => {
       branchFilter = event.target.value;
       renderSidePanels();
     });
-    const agentTabs = [...document.querySelectorAll("[data-agent-view]")];
-    agentTabs.forEach((tab, index) => {
-      tab.addEventListener("click", () => {
-        agentView = tab.dataset.agentView;
-        agentTabs.forEach((button) => { button.setAttribute("aria-selected", String(button === tab)); button.tabIndex = button === tab ? 0 : -1; });
-        $("agents").setAttribute("aria-labelledby", tab.id);
-        renderAgents();
-      });
-      tab.addEventListener("keydown", (event) => {
-        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-        event.preventDefault();
-        const next = event.key === "Home" ? 0 : event.key === "End" ? agentTabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + agentTabs.length) % agentTabs.length;
-        agentTabs[next].focus(); agentTabs[next].click();
-      });
-    });
+    setActivityToggle();
     refresh();
     setInterval(refresh, REFRESH_MS);
   }
@@ -352,76 +347,107 @@
       if (!response.ok) throw new Error((await response.json()).error);
       const { locks, tasks, events, messages, members } = await response.json();
       if (projectsResponse.ok) renderProjects(await projectsResponse.json());
-      setTeam(members ?? []);
       setOffline(false);
       lastMessages = messages;
       lastLocks = locks;
       lastEvents = events;
       lastTasks = tasks;
       lastMembers = members ?? [];
+      setTeam(lastMembers);
       renderChat();
       renderSidePanels();
       renderTasks(tasks);
-      renderAgents();
     } catch {
       setOffline(true);
     }
   }
 
   /**
-   * Draws the chat: a day divider, then messages, with consecutive messages
-   * from the same sender grouped under one name. Rows that mention the current
-   * user are tinted. Skips the redraw when nothing changed, so hover and
-   * scroll aren't disturbed every refresh.
+   * Draws the chat timeline: a day divider, then messages with activity lines
+   * (locks, task moves) in between when "Show activity" is on. Consecutive
+   * messages from the same sender are grouped under one name, and messages that
+   * mention the current user are tinted or outlined. Skips the redraw when
+   * nothing changed, so hover and scroll aren't disturbed every refresh.
    */
   function renderChat() {
-    const key = `${currentName}|${lastMessages.at(-1)?.id ?? 0}|${lastMessages.length}`;
+    const events = showActivity ? lastEvents.filter(inBranchFilter) : [];
+    const key = [currentName, lastMessages.at(-1)?.id ?? 0, lastMessages.length, showActivity, branchFilter, events.length, events.at(-1)?.at ?? 0].join("|");
     if (key === chatKey) return;
     chatKey = key;
-    $("chat-empty").hidden = lastMessages.length > 0;
-    $("chat-scroll").hidden = lastMessages.length === 0;
+    const items = [...lastMessages.map((m) => ({ at: m.at, m })), ...events.map((e) => ({ at: e.at, e }))]
+      .sort((a, b) => a.at - b.at || (a.e ? -1 : 1));
+    $("chat-empty").hidden = items.length > 0;
+    $("chat-scroll").hidden = items.length === 0;
     let html = "";
     let prev = null;
     let day = "";
-    for (const m of lastMessages) {
-      const thisDay = dayLabel(m.at);
+    for (const item of items) {
+      const thisDay = dayLabel(item.at);
       if (thisDay !== day) {
-        html += `<div class="day">${esc(thisDay)}</div>`;
+        html += `<div class="day"><span>${esc(thisDay)}</span></div>`;
         day = thisDay;
         prev = null;
       }
-      const grouped = prev && prev.from === m.from && m.at - prev.at <= GROUP_WINDOW_MS;
-      const mentionsMe = m.from !== currentName && (m.mentions.includes(currentName) || m.mentions.includes(EVERYONE));
-      const avatar = grouped ? `<span class="ht tn">${time(m.at)}</span>` : personAvatar(m.from, !m.fromHuman, 24);
-      const meta = grouped ? "" : `<div class="msg-meta"><span style="font-weight:500">${esc(m.from)}</span>${m.fromHuman ? "" : '<span class="small muted">Agent</span>'}<span class="tn small muted">${time(m.at)}</span></div>`;
-      html += `<div class="msg ${grouped ? "cont" : "head"}${mentionsMe ? " is-me" : ""}"><div>${avatar}</div><div style="min-width:0">${meta}<div class="msg-text">${highlightMentions(m.text)}</div></div></div>`;
-      prev = m;
+      if (item.e) {
+        html += eventLine(item.e);
+        prev = null;
+        continue;
+      }
+      html += messageRow(item.m, prev);
+      prev = item.m;
     }
     $("chat").innerHTML = html;
   }
 
-  /** Lists locked files with owner, reason and time left; locks about to expire are flagged. */
+  /** One chat message: people in a soft box, agents as plain text, with grouping under one name. */
+  function messageRow(m, prev) {
+    const grouped = prev && prev.from === m.from && m.at - prev.at <= GROUP_WINDOW_MS;
+    const mentionsMe = m.from !== currentName && (m.mentions.includes(currentName) || m.mentions.includes(EVERYONE));
+    const isAgent = !m.fromHuman;
+    const avatar = grouped ? "" : personAvatar(m.from, isAgent, 24, isAgent ? "" : "margin-top:8px");
+    const meta = grouped ? "" : isAgent
+      ? `<div class="mh"><span class="mono" style="font-size:13px;font-weight:500">${esc(m.from)}</span><span class="sm mut">Agent</span><span class="tn sm mut">${time(m.at)}</span></div>`
+      : `<div class="mh"><span style="font-weight:500">${esc(m.from)}</span><span class="tn sm mut">${time(m.at)}</span></div>`;
+    const box = isAgent ? `abody${mentionsMe ? " me" : ""}` : `hbox${mentionsMe ? " me" : ""}`;
+    return `<div class="mrow ${grouped ? "cont" : "head"}"><div>${avatar}</div><div class="${box}">${meta}<div class="mt">${highlightMentions(m.text)}</div></div></div>`;
+  }
+
+  /** One activity line inside the chat timeline, with an icon for locks, unlocks and task moves. */
+  function eventLine(e) {
+    const { verb, obj, tail } = splitEvent(e.text);
+    const icon = /^locked\b/.test(e.text) ? ICONS.lock : /^(unlocked|lock on)\b/.test(e.text) ? ICONS.unlock : ICONS.task;
+    return `<div class="ev"><span class="ev-ic">${icon}</span><div class="ev-t">${e.agent ? `<span class="strong">${esc(e.agent)}</span>` : ""}<span>${esc(verb)}</span>${obj ? `<span class="mono strong">${esc(obj)}</span>` : ""}${tail ? `<span>${esc(tail)}</span>` : ""}${e.branch ? `<span class="mono">on ${esc(e.branch)}</span>` : ""}</div><span class="tn sm">${time(e.at)}</span></div>`;
+  }
+
+  /** Lists locked files with owner, branch, reason and time left; locks about to expire are flagged. */
   function renderLocks(locks) {
     $("lock-count").textContent = locks.length;
     $("locks").innerHTML = locks.length ? locks.map((l) => `
-      <div class="row lock-row">
-        ${LOCK_ICON}
+      <div class="lrow">
+        ${ICONS.lock}
         <div style="min-width:0">
-          <div class="mono clip lh">${esc(l.path)}</div>
-          <div class="small muted clip">${esc(l.owner)}${l.branch ? ` · <span class="mono">${esc(l.branch)}</span>` : ""}${l.reason ? ` · ${esc(l.reason)}` : ""}</div>
+          <div class="mono clip" style="line-height:20px;font-size:12.5px">${esc(l.path)}</div>
+          <div class="sm mut" style="display:flex;align-items:center;gap:6px;min-width:0">
+            ${personAvatar(l.owner, true, 16)}<span class="clip">${esc(l.owner)}</span>${l.branch ? `<span aria-hidden="true">·</span><span class="mono clip">${esc(l.branch)}</span>` : ""}
+          </div>
+          ${l.reason ? `<div class="sm mut">${esc(l.reason)}</div>` : ""}
         </div>
-        <span class="tn small muted lh${l.minutesLeft < SOON_MINUTES ? " soon" : ""}" aria-label="${l.minutesLeft} minutes left">${l.minutesLeft}m</span>
+        <span class="tn sm ${l.minutesLeft < SOON_MINUTES ? "warn" : "mut"}" style="line-height:20px" aria-label="${l.minutesLeft} minutes left">${l.minutesLeft}m</span>
       </div>`).join("") : `<div class="none">No files locked</div>`;
   }
 
-  /** Shows the task board without replacing a note field on unchanged polls. */
+  /**
+   * Shows the task board in groups; each task is a row that opens to its note
+   * field and actions. Skips the redraw when nothing changed, so a note being
+   * typed isn't replaced on every poll.
+   */
   function renderTasks(tasks) {
     lastTasks = tasks;
     const enabled = canChangeTasks();
     $("task-title").disabled = !enabled;
     $("task-add").disabled = !enabled;
-    $("task-count").textContent = tasks.length;
-    const key = JSON.stringify([tasks, enabled, currentName]);
+    $("task-count").textContent = tasks.filter((t) => t.status !== "done").length;
+    const key = JSON.stringify([tasks, enabled, currentName, openTaskId]);
     if (taskRenderKey === key) return;
     taskRenderKey = key;
     const focused = document.activeElement;
@@ -429,25 +455,9 @@
     const selection = focusedId ? [focused.selectionStart, focused.selectionEnd] : null;
     const groups = TASK_GROUPS.map(([status, label]) => ({ label, items: tasks.filter((t) => t.status === status) })).filter((g) => g.items.length);
     $("tasks").innerHTML = groups.length ? groups.map((g) => `
-      <div style="padding-bottom:4px">
-        <div class="group-label">${g.label}<span class="tn">${g.items.length}</span></div>
-        ${g.items.map((t) => {
-          const heldByOther = t.owner && t.owner !== currentName && ["doing", "blocked"].includes(t.status);
-          // A stale task (its owner went quiet) can be taken over by anyone.
-          const actions = heldByOther && t.stale ? [["doing", "Take over"]] : heldByOther ? [] : t.status === "todo" ? [["doing", "Claim"]]
-            : t.status === "done" ? [["todo", "Reopen"]]
-            : [[t.status === "blocked" ? "doing" : "blocked", t.status === "blocked" ? "Resume" : "Block"], ["done", "Done"], ["todo", "Release"]];
-          return `<div class="row task-row">
-            <span style="display:inline-flex;padding-top:3px">${TASK_ICONS[t.status] ?? TASK_ICONS.todo}</span>
-            <div style="min-width:0">
-              <div class="task-title ${t.status === "done" ? "done-t" : ""}">${esc(t.title)}</div>
-              ${t.note ? `<div class="small muted task-note">${esc(t.note)}</div>` : ""}
-              <div class="task-meta"><span class="mono tn">#${esc(t.id)}</span><span aria-hidden="true">·</span>${t.owner ? `<span class="task-owner">${personAvatar(t.owner, t.owner.endsWith(AGENT_SUFFIX), 18)}<span>${esc(t.owner)}</span></span>` : "Unassigned"}${t.stale ? `<span class="soon" title="Its owner has been quiet for a while; anyone can take it over">Stale</span>` : ""}</div>
-              ${actions.length ? `<label class="task-note-field">Note<input class="task-input" id="task-note-${esc(t.id)}" data-task-note="${esc(t.id)}" aria-label="Note for task #${esc(t.id)}" value="${esc(taskNotes.get(t.id) ?? t.note ?? "")}"${enabled ? "" : " disabled"}></label>
-              <div class="task-actions">${actions.map(([status, label]) => `<button type="button" class="task-button" data-task-id="${esc(t.id)}" data-status="${status}" aria-label="${label} task #${esc(t.id)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}</div>` : ""}
-            </div>
-          </div>`;
-        }).join("")}
+      <div>
+        <div class="grp">${g.label}<span class="tn" style="font-weight:400">${g.items.length}</span></div>
+        ${g.items.map((t) => taskCard(t, enabled)).join("")}
       </div>`).join("") : `<div class="none">No tasks yet</div>`;
     if (focusedId) {
       const field = $("task-note-" + focusedId);
@@ -455,6 +465,34 @@
     }
   }
 
+  /** One task: a toggle row, and when opened its note field and the actions this person may take. */
+  function taskCard(t, enabled) {
+    const heldByOther = t.owner && t.owner !== currentName && ["doing", "blocked"].includes(t.status);
+    // A stale task (its owner went quiet) can be taken over by anyone.
+    const actions = heldByOther && t.stale ? [["doing", "Take over"]] : heldByOther ? [] : t.status === "todo" ? [["doing", "Claim"]]
+      : t.status === "done" ? [["todo", "Reopen"]]
+      : [[t.status === "blocked" ? "doing" : "blocked", t.status === "blocked" ? "Resume" : "Block"], ["done", "Done"], ["todo", "Release"]];
+    const open = openTaskId === t.id;
+    const owner = t.owner
+      ? `<span style="display:inline-flex;align-items:center;gap:5px;min-width:0">${personAvatar(t.owner, t.owner.endsWith(AGENT_SUFFIX), 16)}<span class="clip">${esc(t.owner)}</span></span>`
+      : "<span>Unassigned</span>";
+    const stale = t.stale ? `<span class="warn" title="Its owner has been quiet for a while; anyone can take it over">Stale</span>` : "";
+    const detail = !open ? "" : `<div class="tdetail">${actions.length
+      ? `<input class="inp" id="task-note-${esc(t.id)}" data-task-note="${esc(t.id)}" aria-label="Note for task #${esc(t.id)}" placeholder="Note (required to block)" value="${esc(taskNotes.get(t.id) ?? t.note ?? "")}"${enabled ? "" : " disabled"}>
+         <div style="display:flex;flex-wrap:wrap;gap:6px">${actions.map(([status, label]) => `<button type="button" class="sbtn" data-task-id="${esc(t.id)}" data-status="${status}" aria-label="${label} task #${esc(t.id)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}</div>`
+      : `<div class="sm mut">Held by ${esc(t.owner)}. Only they can move it.</div>`}</div>`;
+    return `<div class="tcard${open ? " open" : ""}">
+      <button class="trow" data-task-toggle="${esc(t.id)}" aria-expanded="${open}">
+        <span style="display:inline-flex;padding-top:3px">${TASK_ICONS[t.status] ?? TASK_ICONS.todo}</span>
+        <span style="display:flex;flex-direction:column;min-width:0">
+          <span style="line-height:20px;overflow-wrap:anywhere;color:${t.status === "done" ? "var(--fg2)" : "var(--fg)"}">${esc(t.title)}</span>
+          ${t.note ? `<span class="sm mut">${esc(t.note)}</span>` : ""}
+          <span class="sm mut" style="display:flex;align-items:center;gap:6px;margin-top:2px"><span class="mono tn">#${esc(t.id)}</span>${owner}${stale}</span>
+        </span>
+      </button>${detail}</div>`;
+  }
+
+  /** Whether the person may change tasks right now: signed in, connected and not already saving. */
   function canChangeTasks() {
     return Boolean(currentName && currentKey() && !offline && !taskBusy);
   }
@@ -466,22 +504,32 @@
       if (event.target.dataset.taskNote) taskNotes.set(Number(event.target.dataset.taskNote), event.target.value);
     });
     $("tasks").addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-task-toggle]");
+      if (toggle) {
+        const id = Number(toggle.dataset.taskToggle);
+        openTaskId = openTaskId === id ? null : id;
+        taskError();
+        return renderTasks(lastTasks);
+      }
       const button = event.target.closest("[data-task-id]");
       if (button && !button.disabled) moveDashboardTask(Number(button.dataset.taskId), button.dataset.status);
     });
   }
 
+  /** Shows or clears the inline task error. */
   function taskError(message = "") {
     $("task-error").textContent = message;
     $("task-error").hidden = !message;
   }
 
+  /** Adds the typed task as the signed-in human; the field clears only when the hub accepted it. */
   async function addDashboardTask() {
     const title = $("task-title").value.trim();
     if (!title || !canChangeTasks()) return;
     if (await saveTask("/api/tasks", { title })) $("task-title").value = "";
   }
 
+  /** Moves a task to a new status with its note; blocking needs a note saying why. */
   async function moveDashboardTask(id, status) {
     if (!canChangeTasks()) return;
     const task = lastTasks.find((t) => t.id === id);
@@ -515,72 +563,52 @@
     }
   }
 
-  /** Shows work reported through in-progress tasks, unexpired file locks, or the agent's own status line (set_status). */
-  function renderAgents() {
-    const names = [...new Set([
-      ...lastMembers.map((m) => m.agent),
-      ...lastTasks.filter((t) => t.status === "doing").map((t) => t.owner),
-      ...lastLocks.map((l) => l.owner),
-    ].filter((name) => typeof name === "string" && name.endsWith(AGENT_SUFFIX)))].sort();
-    const agents = names.map((name) => {
-      const member = lastMembers.find((m) => m.agent === name);
-      const tasks = lastTasks.filter((t) => t.status === "doing" && t.owner === name);
-      // The hub's status line, shown when it says something the tasks don't already say.
-      const said = member?.status === "working" && member.doing && !tasks.some((t) => member.doing.includes(t.title)) ? member.doing : "";
-      return { name, tasks, said, locks: lastLocks.filter((l) => l.owner === name), reporting: member?.status === "working" };
-    });
-    const working = agents.filter((a) => a.tasks.length || a.locks.length || a.reporting);
-    $("agent-count").textContent = `${working.length} working`;
-    const shown = agentView === "working" ? working : agents;
-    $("agents").innerHTML = shown.length ? shown.map((a) => `
-      <div class="row agent-row">
-        ${personAvatar(a.name, true, 24)}
-        <div><div class="agent-name">${esc(a.name)}</div>
-          ${a.tasks.map((t) => `<div class="agent-work">${esc(t.title)}</div>`).join("")}
-          ${a.said ? `<div class="agent-work">${esc(a.said)}</div>` : ""}
-          ${a.locks.length ? `<div class="agent-work">${a.locks.length} ${a.locks.length === 1 ? "file locked" : "files locked"}</div>` : ""}
-          ${!a.tasks.length && !a.locks.length && !a.said ? `<div class="agent-work">${a.reporting ? "Working" : "No work reported"}</div>` : ""}
-        </div>
-      </div>`).join("") : `<div class="none">${agentView === "working" ? "No agents reporting work" : "No agents have joined yet"}</div>`;
-  }
-
-  /** A stable color links each person's messages and their agent across the dashboard. */
-  function personAvatar(name, agent, size) {
+  /**
+   * A stable color links each person's messages and their agent across the
+   * dashboard: people are round with an initial, agents rounded squares with
+   * a robot. Dark and light themes get matching color pairs.
+   */
+  function personAvatar(name, agent, size, extraStyle = "") {
     const identity = String(name ?? "").toLowerCase().replace(/-agent$/, "");
     let hash = 0;
     for (const char of identity) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
     const [background, foreground] = AVATAR_COLORS[hash % AVATAR_COLORS.length];
-    return `<span class="av ${agent ? "av-a" : "av-h"}" aria-hidden="true" style="width:${size}px;height:${size}px;font-size:${size <= 18 ? 10 : 11}px;--avatar-bg:${background};--avatar-fg:${foreground}">${agent ? AGENT_ICON : esc(initial(name))}</span>`;
+    const fontSize = size <= 16 ? 9 : size <= 18 ? 10 : size <= 20 ? 10.5 : size <= 24 ? 11 : 12;
+    const iconSize = size >= 24 ? 14 : size >= 20 ? 12 : 10;
+    return `<span class="av ${agent ? "av-a" : "av-h"}" aria-hidden="true" style="width:${size}px;height:${size}px;font-size:${fontSize}px;--avatar-bg:${background};--avatar-fg:${foreground};--avatar-lbg:${foreground};--avatar-lfg:${background};${extraStyle}">${agent ? agentIcon(iconSize) : esc(initial(name))}</span>`;
   }
 
-  /** Shows the activity feed, with file paths and task numbers in monospace. */
+  /** Shows the activity feed in the Activity tab, with file paths and task numbers in monospace. */
   function renderEvents(events) {
+    $("event-count").textContent = events.length;
     $("events").innerHTML = events.length ? events.map((e) => {
       const { verb, obj, tail } = splitEvent(e.text);
       return `
-        <div class="row event-row">
-          <div class="event-line">
+        <div class="arow">
+          <span class="tn sm mut">${time(e.at)}</span>
+          <div class="ev-t">
             <span style="font-weight:500">${esc(e.agent)}</span>
-            <span class="muted">${esc(verb)}</span>
+            <span class="mut">${esc(verb)}</span>
             ${obj ? `<span class="mono">${esc(obj)}</span>` : ""}
-            ${tail ? `<span class="muted">${esc(tail)}</span>` : ""}
-            ${e.branch ? `<span class="mono muted">on ${esc(e.branch)}</span>` : ""}
+            ${tail ? `<span class="mut">${esc(tail)}</span>` : ""}
+            ${e.branch ? `<span class="mono mut">on ${esc(e.branch)}</span>` : ""}
           </div>
-          <span class="tn small muted lh">${time(e.at)}</span>
         </div>`;
     }).join("") : `<div class="none">No activity yet</div>`;
   }
 
   /**
    * Takes the project's members (people who ran the setup, named after their
-   * GitHub accounts) and rebuilds the team size, the "Who are you?" list and
+   * GitHub accounts) and rebuilds the team line, the "Who are you?" list and
    * the @mention suggestions. Opens the picker the first time if this browser
    * hasn't chosen a name yet.
    */
   function setTeam(members) {
     teamMembers = members.map((m) => m.name).sort();
     mentionable = [...teamMembers, ...members.map((m) => m.agent), EVERYONE];
-    $("team-size").textContent = `${teamMembers.length} ${teamMembers.length === 1 ? "person" : "people"}`;
+    const people = `${teamMembers.length} ${teamMembers.length === 1 ? "person" : "people"}`;
+    const agents = `${members.length} ${members.length === 1 ? "agent" : "agents"}`;
+    $("team-size").textContent = `${people} · ${agents}`;
     renderTeam(members);
     if (!currentName && $("picker").hidden && !setTeam.asked) {
       setTeam.asked = true;
@@ -588,72 +616,100 @@
     }
   }
 
-  /** Shows agent presence for every member; older hubs fall back to away. */
+  /**
+   * Draws the team in the sidebar: each person with their status, and under
+   * them their agent with its status and the work it reports (tasks in
+   * progress, locked files, or its own status line).
+   */
   function renderTeam(members) {
     syncPersonalPresence(members);
     $("member-count").textContent = members.length;
-    const labels = { working: "Working", available: "Available", away: "Away" };
     $("members").innerHTML = members.length ? [...members].sort((a, b) => a.name.localeCompare(b.name)).map((member) => {
-      const status = Object.hasOwn(labels, member.status) ? member.status : "away";
-      const locks = Number.isFinite(member.locks) ? Math.max(0, Math.floor(member.locks)) : 0;
-      const seen = Number.isFinite(member.lastSeen) && member.lastSeen > 0 ? member.lastSeen : null;
-      return `<div class="member-row">
-        <span class="dot status-${status}" aria-hidden="true"></span>
-        <div class="member-main">
-          <div class="member-head"><span class="member-name">@${esc(member.agent || member.name)}</span><span class="small muted">${labels[status]}</span></div>
-          ${member.doing ? `<div class="member-doing">${esc(member.doing)}</div>` : ""}
-          <div class="member-meta">
-            <span title="${seen ? esc(new Date(seen).toLocaleString()) : "No activity recorded"}">Last seen: ${lastSeenLabel(seen)}</span>
-            <span>${locks} locked ${locks === 1 ? "file" : "files"}</span>
+      const person = member.person ?? {};
+      const personStatus = statusOf(person.status);
+      const agent = member.agent || `${member.name}${AGENT_SUFFIX}`;
+      const tasks = lastTasks.filter((t) => t.status === "doing" && t.owner === agent);
+      const lockCount = Number.isFinite(member.locks) ? Math.max(0, Math.floor(member.locks)) : lastLocks.filter((l) => l.owner === agent).length;
+      const agentStatus = Object.hasOwn(STATUS_LABELS, member.status) ? member.status : tasks.length || lockCount ? "working" : "away";
+      // The agent's own status line, shown when it says something its tasks don't already say.
+      const said = member.doing && !tasks.some((t) => member.doing.includes(t.title)) ? member.doing : "";
+      const work = [...tasks.map((t) => t.title), ...(said ? [said] : []), ...(lockCount ? [`${lockCount} ${lockCount === 1 ? "file" : "files"} locked`] : [])];
+      const humanLine = `${person.doing ? `${person.doing} · ` : ""}${lastSeenLabel(seenAt(person.lastSeen))}`;
+      const agentLine = `${work.length ? work.join(" · ") : "No work reported"} · ${lastSeenLabel(seenAt(member.lastSeen))}`;
+      return `<div style="margin-bottom:6px">
+        <div class="mem">
+          ${personAvatar(member.name, false, 20)}
+          <div style="min-width:0">
+            <div class="l1"><span class="clip" style="font-weight:500">${esc(member.name)}</span><span style="flex:1"></span><span class="st st-${personStatus}" aria-hidden="true"></span><span class="sm mut">${STATUS_LABELS[personStatus]}</span></div>
+            <div class="l2" title="${esc(humanLine)}">${esc(humanLine)}</div>
           </div>
-          ${renderHumanPresence(member)}
+        </div>
+        <div class="mem sub">
+          ${personAvatar(agent, true, 20)}
+          <div style="min-width:0">
+            <div class="l1"><span class="clip mono" style="font-size:12.5px">${esc(agent)}</span><span style="flex:1"></span><span class="st st-${agentStatus}" aria-hidden="true"></span><span class="sm mut">${STATUS_LABELS[agentStatus]}</span></div>
+            <div class="l2" title="${esc(agentLine)}">${esc(agentLine)}</div>
+          </div>
         </div>
       </div>`;
-    }).join("") : `<div class="none">No teammates yet</div>`;
+    }).join("") : `<div class="sm mut" style="padding:4px 8px">No teammates yet</div>`;
   }
 
-  /** Human and agent presence are independent: a dashboard poll only marks the human active. */
-  function renderHumanPresence(member) {
-    const person = member.person ?? {};
-    const labels = { working: "Working", available: "Available", away: "Away" };
-    const status = Object.hasOwn(labels, person.status) ? person.status : "away";
-    const seen = Number.isFinite(person.lastSeen) && person.lastSeen > 0 ? person.lastSeen : null;
-    return `<div class="human-presence small">
-      <div><span class="dot status-${status}" aria-hidden="true"></span><span>${esc(member.name)}</span><span class="muted"> · Human · ${labels[status]}</span></div>
-      ${person.doing ? `<div class="member-doing">${esc(person.doing)}</div>` : ""}
-      <div class="muted" title="${seen ? esc(new Date(seen).toLocaleString()) : "No activity recorded"}">Last seen: ${lastSeenLabel(seen)}</div>
-    </div>`;
+  /** A known status, or "away" for anything missing or unknown (older hubs). */
+  function statusOf(value) {
+    return Object.hasOwn(STATUS_LABELS, value) ? value : "away";
   }
 
+  /** A last-seen time as a number, or null when the hub has never seen them. */
+  function seenAt(value) {
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  /** The status form is only usable while signed in and connected; it shows only while being edited. */
   function setPresenceAvailability() {
     const signedIn = Boolean(currentName && currentKey());
-    $("presence-form").hidden = !signedIn;
+    $("presence-form").hidden = !(signedIn && presenceEditing);
+    $("presence-edit").disabled = !signedIn || offline;
     for (const id of ["presence-status", "presence-doing", "presence-save"]) $(id).disabled = !signedIn || offline || presenceBusy;
   }
 
-  /** Polls may update the form until the person starts editing it. */
+  /** Polls may update the form until the person starts editing it; also keeps the status under their name current. */
   function syncPersonalPresence(members) {
     const identity = `${project}:${currentName}`;
     if (presenceIdentity !== identity) {
       presenceIdentity = identity;
       presenceDirty = false;
+      presenceEditing = false;
       $("presence-feedback").textContent = "";
       $("presence-doing").value = "";
       $("presence-status").value = "available";
     }
+    const person = members.find((member) => member.name === currentName)?.person;
     if (!presenceDirty && !presenceBusy) {
-      const person = members.find((member) => member.name === currentName)?.person;
       $("presence-status").value = ["available", "working", "away"].includes(person?.status) ? person.status : "available";
       $("presence-doing").value = person?.doing ?? "";
     }
+    $("user-status").textContent = `${STATUS_LABELS[statusOf(person?.status)]}${person?.doing ? ` · ${person.doing}` : ""}`;
     setPresenceAvailability();
   }
 
+  /** Wires the status form: the pencil opens it, Cancel closes it, Save sends it. */
   function setUpPresence() {
     for (const id of ["presence-status", "presence-doing"]) $(id).addEventListener("input", () => { presenceDirty = true; });
     $("presence-form").addEventListener("submit", (event) => { event.preventDefault(); savePersonalPresence(); });
+    $("presence-edit").addEventListener("click", () => {
+      presenceEditing = !presenceEditing;
+      $("presence-feedback").textContent = "";
+      setPresenceAvailability();
+    });
+    $("presence-cancel").addEventListener("click", () => {
+      presenceEditing = false;
+      presenceDirty = false;
+      syncPersonalPresence(lastMembers);
+    });
   }
 
+  /** Saves the person's own status and what they're doing; errors keep the edits and the connection. */
   async function savePersonalPresence() {
     if (!currentName || !currentKey() || offline || presenceBusy) return;
     const identity = `${project}:${currentName}`;
@@ -664,11 +720,12 @@
     setPresenceAvailability();
     try {
       const query = isAdmin ? `as=human&agent=${encodeURIComponent(currentName)}` : "as=human";
-      const response = await hubFetch(`/api/presence?${query}`, {method: "POST", body: JSON.stringify({status, doing})});
+      const response = await hubFetch(`/api/presence?${query}`, { method: "POST", body: JSON.stringify({ status, doing }) });
       const result = await response.json().catch(() => ({}));
       if (identity !== `${project}:${currentName}`) return;
       if (!response.ok) throw new Error(result.error || `Status update failed (${response.status}).`);
       presenceDirty = false;
+      presenceEditing = false;
       $("presence-feedback").textContent = "Status saved.";
       refresh();
     } catch (error) {
@@ -691,18 +748,55 @@
     return `${days} ${days === 1 ? "day" : "days"} ago`;
   }
 
+  /** Whether an item belongs to the branch chosen in the sidebar; with no branch chosen, everything does. */
+  function inBranchFilter(item) {
+    return !branchFilter || item.branch === branchFilter;
+  }
+
   /**
-   * Redraws locks and activity for the chosen branch, and refreshes the
-   * branch menu from the branches that currently have locks or activity.
+   * Redraws locks and activity for the chosen branch (and the chat timeline's
+   * activity lines), and refreshes the branch menu from the branches that
+   * currently have locks or activity.
    */
   function renderSidePanels() {
     const branches = [...new Set([...lastLocks.map((l) => l.branch), ...lastEvents.map((e) => e.branch)].filter(Boolean))].sort();
     if (branchFilter && !branches.includes(branchFilter)) branches.unshift(branchFilter);
     const html = [`<option value="">All branches</option>`, ...branches.map((b) => `<option value="${esc(b)}"${b === branchFilter ? " selected" : ""}>${esc(b)}</option>`)].join("");
     if ($("branch").innerHTML !== html) $("branch").innerHTML = html;
-    const shown = (item) => !branchFilter || item.branch === branchFilter;
-    renderLocks(lastLocks.filter(shown));
-    renderEvents(lastEvents.filter(shown));
+    renderLocks(lastLocks.filter(inBranchFilter));
+    renderEvents(lastEvents.filter(inBranchFilter));
+    renderChat();
+  }
+
+  /** Wires the Tasks / Locks / Activity tabs; only one list shows at a time. */
+  function setUpTabs() {
+    for (const button of document.querySelectorAll("[data-tab]")) button.addEventListener("click", () => setTab(button.dataset.tab));
+  }
+
+  /** Shows one inspector list and marks its tab. */
+  function setTab(name) {
+    activeTab = name;
+    for (const tab of ["tasks", "locks", "activity"]) {
+      $(`panel-${tab}`).hidden = tab !== name;
+      $(`tab-${tab}`).classList.toggle("on", tab === name);
+      $(`tab-${tab}`).setAttribute("aria-selected", String(tab === name));
+    }
+  }
+
+  /** Wires the "Show activity" switch; the choice is remembered in this browser. */
+  function setActivityToggle() {
+    const button = $("activity-toggle");
+    const paint = () => {
+      button.setAttribute("aria-pressed", String(showActivity));
+      button.querySelector(".sw").classList.toggle("on", showActivity);
+    };
+    paint();
+    button.addEventListener("click", () => {
+      showActivity = !showActivity;
+      writeStored(ACTIVITY_KEY, showActivity ? "on" : "off");
+      paint();
+      renderChat();
+    });
   }
 
   /**
@@ -725,6 +819,7 @@
     chatKey = "";
     lastMessages = [];
     lastTasks = [];
+    openTaskId = null;
     taskNotes.clear();
     taskError();
     $("task-title").value = "";
@@ -842,7 +937,7 @@
   /**
    * Builds the "Who are you?" dialog from the team list and opens it on first
    * launch, or when the saved name isn't a team member. The choice is saved in
-   * this browser, so it's only asked once; the name buttons reopen it.
+   * this browser, so it's only asked once; the name button reopens it.
    */
   function setUpPicker() {
     $("pick-list").addEventListener("click", (event) => {
@@ -860,11 +955,11 @@
     // Signed-in people are named by GitHub; only the admin picks who to post as.
     if (currentKey() && !isAdmin) return;
     $("pick-list").innerHTML = teamMembers.length ? teamMembers.map((n) => `
-      <button class="pick" data-name="${n}">
+      <button class="pick" data-name="${esc(n)}">
         ${personAvatar(n, false, 28)}
-        <span style="display:flex;flex-direction:column;min-width:0"><span style="font-size:14px;font-weight:500">${esc(n)}</span><span class="small muted">with ${esc(n)}${AGENT_SUFFIX}</span></span>
-        ${n === currentName ? `<span style="margin-left:auto">${CHECK_ICON}</span>` : ""}
-      </button>`).join("") : `<div class="none" style="padding:8px 12px">Nobody has joined this project yet. Run <span class="mono">agentstalk</span> in the repo to join with your GitHub name.</div>`;
+        <span style="display:flex;flex-direction:column;min-width:0"><span style="font-size:14px;font-weight:500">${esc(n)}</span><span class="sm mut">with ${esc(n)}${AGENT_SUFFIX}</span></span>
+        ${n === currentName ? `<span style="margin-left:auto">${ICONS.check}</span>` : ""}
+      </button>`).join("") : `<div class="none">Nobody has joined this project yet. Run <span class="mono">agentstalk</span> in the repo to join with your GitHub name.</div>`;
     $("picker-foot").hidden = !currentName;
     $("picker").hidden = false;
   }
@@ -874,12 +969,15 @@
     currentName = name;
     writeStored(NAME_KEY, name);
     document.querySelectorAll("[data-user-name]").forEach((el) => (el.textContent = name));
-    document.querySelectorAll("[data-user-initial]").forEach((el) => (el.textContent = initial(name)));
     document.querySelectorAll("[data-user-initial]").forEach((el) => {
-      const identity = String(name ?? "").toLowerCase(); let hash = 0;
-      for (const char of identity) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
+      el.textContent = initial(name);
+      let hash = 0;
+      for (const char of String(name ?? "").toLowerCase()) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
       const [background, foreground] = AVATAR_COLORS[hash % AVATAR_COLORS.length];
-      el.style.setProperty("--avatar-bg", background); el.style.setProperty("--avatar-fg", foreground);
+      el.style.setProperty("--avatar-bg", background);
+      el.style.setProperty("--avatar-fg", foreground);
+      el.style.setProperty("--avatar-lbg", foreground);
+      el.style.setProperty("--avatar-lfg", background);
     });
     $("picker").hidden = true;
     chatKey = "";
@@ -892,8 +990,8 @@
   function setOffline(isOffline) {
     offline = isOffline;
     $("offline").hidden = !isOffline;
-    $("conn").className = `conn${isOffline ? " soon" : ""}`;
-    $("conn").innerHTML = `<span class="dot ${isOffline ? "dot-off" : "dot-live"}"></span>${isOffline ? "Offline" : "Live"}`;
+    $("conn").className = `sm ${isOffline ? "warn" : "mut"}`;
+    $("conn").innerHTML = `<span class="dot" style="background:${isOffline ? "var(--warn)" : "var(--ok)"}"></span>${isOffline ? "Offline" : "Live"}`;
     updateComposer();
     renderTasks(lastTasks);
     setPresenceAvailability();
@@ -904,7 +1002,7 @@
     $("hub").classList.toggle("light", theme === "light");
     writeStored(THEME_KEY, theme);
     $("theme-btn").setAttribute("aria-label", theme === "light" ? "Switch to dark mode" : "Switch to light mode");
-    $("theme-btn").innerHTML = theme === "light" ? MOON_ICON : SUN_ICON;
+    $("theme-btn").innerHTML = theme === "light" ? ICONS.moon : ICONS.sun;
   }
 
   /** Splits an activity line like "locked src/api.ts (reason)" so the path or task number can be styled. */
@@ -1016,15 +1114,23 @@
     try { localStorage.setItem(key, value); } catch {}
   }
 
-  const AGENT_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5.5" width="10" height="7.5" rx="2"/><path d="M8 5.5V3.4"/><circle cx="6" cy="9.2" r=".7" fill="currentColor"/><circle cx="10" cy="9.2" r=".7" fill="currentColor"/></svg>';
-  const LOCK_ICON = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--icon)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-top:3px"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>';
-  const CHECK_ICON = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="var(--fg)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Current user"><path d="M2.8 7.3l2.7 2.6 5.7-6"/></svg>';
-  const SUN_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="2.7"/><path d="M8 1.8v1.4M8 12.8v1.4M1.8 8h1.4M12.8 8h1.4M3.6 3.6l1 1M11.4 11.4l1 1M3.6 12.4l1-1M11.4 4.6l1-1"/></svg>';
-  const MOON_ICON = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg>';
+  /** The robot icon used inside agent avatars, at the given pixel size. */
+  function agentIcon(size) {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5.5" width="10" height="7.5" rx="2"/><path d="M8 5.5V3.4"/><circle cx="6" cy="9.2" r=".7" fill="currentColor"/><circle cx="10" cy="9.2" r=".7" fill="currentColor"/></svg>`;
+  }
+
+  const ICONS = {
+    lock: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-top:4px"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>',
+    unlock: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 4.9-.7"/></svg>',
+    task: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9.5 4.5L13 8l-3.5 3.5"/></svg>',
+    check: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="var(--fg)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Current user"><path d="M2.8 7.3l2.7 2.6 5.7-6"/></svg>',
+    sun: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="2.7"/><path d="M8 1.8v1.4M8 12.8v1.4M1.8 8h1.4M12.8 8h1.4M3.6 3.6l1 1M11.4 11.4l1 1M3.6 12.4l1-1M11.4 4.6l1-1"/></svg>',
+    moon: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg>',
+  };
   const TASK_ICONS = {
     todo: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="var(--icon)" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="5.5"/></svg>',
-    blocked: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="var(--warn)" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="5.5"/><path d="M5.5 4.5v5M8.5 4.5v5"/></svg>',
-    doing: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.5" style="stroke:var(--acc-fg)" stroke-width="1.4"/><circle cx="7" cy="7" r="2.3" style="fill:var(--acc-fg)"/></svg>',
+    blocked: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke-width="1.4" stroke-linecap="round" aria-hidden="true" style="stroke:var(--warn)"><circle cx="7" cy="7" r="5.5"/><path d="M3.2 10.8l7.6-7.6"/></svg>',
+    doing: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.5" stroke-width="1.4" style="stroke:var(--acc-fg)"/><circle cx="7" cy="7" r="2.3" style="fill:var(--acc-fg)"/></svg>',
     done: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="var(--fg2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 7.3l2.7 2.6 5.7-6"/></svg>',
   };
 
