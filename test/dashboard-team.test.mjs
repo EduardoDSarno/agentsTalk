@@ -77,3 +77,25 @@ test('Your own status shows under your name in the sidebar', () => {
   vm.runInContext('syncPersonalPresence([])', result.context);
   assert.equal(result.element('user-status').textContent, 'Away');
 });
+
+test('Only the repo owner sees Remove, never on their own row, and confirming sends the request', async () => {
+  const result = sidebar([]);
+  const draw = (who) => {
+    vm.runInContext(`currentName = "${who}"; project = "boss/app"; renderTeam([{ name: "boss", agent: "boss-agent" }, { name: "bob", agent: "bob-agent" }])`, result.context);
+    return result.element('members').innerHTML;
+  };
+  const owner = draw('boss');
+  assert.equal((owner.match(/data-remove-member/g) || []).length, 1);
+  assert.match(owner, /data-remove-member="bob"/);
+  assert.ok(!draw('bob').includes('data-remove-member'), 'a teammate cannot remove people');
+
+  const requests = [];
+  Object.assign(result.context, { confirm: () => true, alert() {}, fetch: async (url, options) => { requests.push({ url, ...options }); return { ok: true, json: async () => ({}) }; } });
+  vm.runInContext('keys = { "boss/app": "owner-key" }; refresh = () => {}; currentName = "boss"', result.context);
+  await vm.runInContext('removeTeamMember("bob")', result.context);
+  assert.equal(requests[0].url, '/api/members/remove');
+  assert.deepEqual(JSON.parse(requests[0].body), { login: 'bob' });
+  assert.equal(requests[0].headers.authorization, 'Bearer owner-key');
+  await vm.runInContext('removeTeamMember("boss")', result.context);
+  assert.equal(requests.length, 1, 'the owner cannot remove themselves');
+});

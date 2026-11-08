@@ -131,6 +131,10 @@ async function handleRequest(req, res) {
     if (req.method === "GET" && url.pathname === "/api/me") return sendJson(res, 200, { login: caller.login, project, admin: caller.admin });
     if (req.method === "GET" && url.pathname === "/api/projects") return sendJson(res, 200, listProjects(caller));
     if (url.pathname === "/mcp") return await handleMcp(req, res, space, project, agent);
+    if (req.method === "POST" && url.pathname === "/api/members/remove") {
+      const { login } = await readJson(req);
+      return sendJson(res, 200, removeMember(space, project, caller, cleanName(login)));
+    }
     if (req.method === "GET" && url.pathname === "/api/state") return sendJson(res, 200, snapshot(space));
     if (req.method === "POST" && url.pathname === "/api/presence") {
       const body = await readJson(req);
@@ -464,6 +468,31 @@ function joinProject(space, human, agent) {
   if (isNew) logEvent(space, human, `joined the project with ${agent}`);
   saveStore();
   return { human, agent };
+}
+
+/**
+ * Lets the repo's owner (the first part of the project name) remove a
+ * collaborator and their agent from the project: their keys stop working,
+ * their locks are released and they leave the team list. Access to the repo
+ * itself stays on GitHub, so a removed person who is still a collaborator
+ * can sign in again until they are removed there too.
+ */
+function removeMember(space, project, caller, login) {
+  const owner = project.split("/")[0];
+  if (!caller.admin && caller.login.toLowerCase() !== owner) throw httpError(403, "Only the repo owner can remove people from the project");
+  if (login === owner) throw httpError(400, "The repo owner cannot be removed");
+  const member = space.members[login];
+  if (!member) throw httpError(404, `${login} is not in this project`);
+  unlockFiles(space, member.agent);
+  delete space.members[login];
+  delete space.presence[login];
+  delete space.presence[member.agent];
+  for (const [hash, record] of Object.entries(store.keys)) {
+    if (record.project === project && record.login === login) delete store.keys[hash];
+  }
+  logEvent(space, caller.admin ? "admin" : caller.login, `removed ${login} and ${member.agent} from the project`);
+  saveStore();
+  return { removed: login, agent: member.agent };
 }
 
 /** Remembers that this person or agent was just heard from; kept in memory, since it goes stale in minutes. */
