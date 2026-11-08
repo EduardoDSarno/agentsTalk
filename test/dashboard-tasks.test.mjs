@@ -16,14 +16,15 @@ function board(tasks = []) {
   };
   const requests = [];
   let respond = async () => ({ok: true, json: async () => ({id: 9, title: 'New task', status: 'todo', owner: '', note: ''})});
+  const stored = {};
   const context = vm.createContext({
     document: { getElementById: element }, location: {search: ''}, URLSearchParams,
-    localStorage: { getItem: () => null }, tasks,
+    localStorage: { getItem: (key) => stored[key] ?? null, setItem: (key, value) => { stored[key] = value; } }, tasks,
     fetch: async (url, options) => { requests.push({url, ...options}); return respond(url, options); },
   });
   vm.runInContext(script, context);
   vm.runInContext('currentName = "alice"; project = "team/project"; keys = {"team/project":"test-key"}; refresh = () => {}; setUpTasks(); renderTasks(tasks);', context);
-  return { element, requests, run: code => vm.runInContext(code, context), respond: fn => {respond = fn;} };
+  return { element, requests, stored, run: code => vm.runInContext(code, context), respond: fn => {respond = fn;} };
 }
 const task = (id, status, owner = '') => ({id, title: `Task ${id}`, status, owner, note: ''});
 
@@ -35,10 +36,15 @@ test('Board groups blocked work and offers ownership-aware actions', () => {
     b.element('tasks').listeners.click({ target: { closest: (selector) => (selector === '[data-task-toggle]' ? { dataset: { taskToggle: String(id) } } : null) } });
     return b.element('tasks').innerHTML;
   };
-  for (const [id, labels] of [[1, ['Claim task #1']], [3, ['Resume task #3', 'Done task #3', 'Release task #3']], [4, ['Reopen task #4']]]) {
+  for (const [id, labels] of [[1, ['Claim task #1']], [3, ['Resume task #3', 'Done task #3', 'Release task #3']]]) {
     const view = openActions(id);
     for (const text of labels) assert.ok(view.includes(text), text);
   }
+  // Done starts folded, so its tasks appear only once the group is opened.
+  assert.ok(!b.element('tasks').innerHTML.includes('Reopen task #4'), 'the Done group starts folded');
+  b.run('toggleGroup("done")');
+  const doneView = openActions(4);
+  for (const text of ['Reopen task #4']) assert.ok(doneView.includes(text), text);
   const held = openActions(2);
   assert.ok(!held.includes('data-task-id="2"'));
   assert.match(held, /Held by bob-agent/);
@@ -143,4 +149,30 @@ test('A task with a pull request shows its review state and lets the human appro
   await new Promise((resolve) => setTimeout(resolve));
   assert.equal(b.requests[0].url, '/api/reviews?as=human');
   assert.deepEqual(JSON.parse(b.requests[0].body), { pr: 7, verdict: 'approved' });
+});
+
+test('Task groups fold from their header, Done starts folded, and the choice is remembered', () => {
+  const b = board([task(1, 'todo'), task(2, 'done', 'bob-agent')]);
+  const view = () => b.element('tasks').innerHTML;
+  assert.match(view(), /data-group-toggle="done" aria-expanded="false"/);
+  assert.match(view(), /data-group-toggle="todo" aria-expanded="true"/);
+  assert.ok(!view().includes('Task 2'), 'a folded group hides its tasks');
+  assert.ok(view().includes('Task 1'));
+
+  b.run('toggleGroup("done")');
+  assert.match(view(), /data-group-toggle="done" aria-expanded="true"/);
+  assert.ok(view().includes('Task 2'));
+  assert.equal(b.stored['agent-hub-groups'], '[]', 'opening Done is saved as "nothing folded"');
+
+  b.run('toggleGroup("done")');
+  assert.ok(!view().includes('Task 2'));
+  assert.equal(b.stored['agent-hub-groups'], '["done"]');
+});
+
+test('A saved fold is restored on load, and unknown groups are ignored', () => {
+  const b = board([task(1, 'todo'), task(2, 'done')]);
+  b.stored['agent-hub-groups'] = '["todo","gone"]';
+  assert.deepEqual([...b.run('readCollapsedGroups()')], ['todo']);
+  b.stored['agent-hub-groups'] = 'not json';
+  assert.deepEqual([...b.run('readCollapsedGroups()')], ['done'], 'bad saved values fall back to Done folded');
 });
