@@ -106,7 +106,10 @@ body { margin: 0; }
 .hub .tab.on { background: var(--active); color: var(--fg); }
 .hub .tab .c { font-size: 12px; font-weight: 400; color: var(--fg2); }
 .hub .ibody { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0 16px; }
-.hub .grp { display: flex; align-items: center; gap: 6px; padding: 14px 16px 4px; font-size: 12px; font-weight: 500; color: var(--fg2); }
+.hub .grp { display: flex; align-items: center; gap: 6px; width: 100%; padding: 14px 16px 4px; font-size: 12px; font-weight: 500; color: var(--fg2); }
+.hub .grp:hover { color: var(--fg); }
+.hub .grp .chev { display: inline-flex; transition: transform .12s ease; }
+.hub .grp[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .hub .trow { display: grid; grid-template-columns: 14px minmax(0, 1fr); column-gap: 10px; width: 100%; padding: 7px 16px; }
 .hub .trow:hover { background: var(--hover); }
 .hub .tcard.open { background: var(--hover); }
@@ -120,6 +123,7 @@ body { margin: 0; }
 .hub .lrow:hover, .hub .arow:hover { background: var(--hover); }
 .hub .arow { display: grid; grid-template-columns: 40px minmax(0, 1fr); column-gap: 8px; padding: 6px 16px; line-height: 20px; }
 .hub .none { padding: 12px 16px; color: var(--fg2); }
+.hub .searchbar { position: sticky; top: 0; z-index: 1; padding: 8px 16px 6px; background: var(--panel); }
 
 .hub .overlay { position: absolute; inset: 0; z-index: 20; display: flex; align-items: flex-start; justify-content: center; padding: 16vh 16px 16px; background: rgba(0, 0, 0, 0.5); }
 .hub .dialog { width: 100%; max-width: 400px; background: var(--pop); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
@@ -241,7 +245,10 @@ body { margin: 0; }
           <div id="tasks"></div>
         </div>
         <div class="ibody" role="tabpanel" id="panel-locks" hidden><div id="locks"></div></div>
-        <div class="ibody" role="tabpanel" id="panel-activity" hidden><div id="events"></div></div>
+        <div class="ibody" role="tabpanel" id="panel-activity" hidden>
+          <div class="searchbar"><input class="inp" id="event-search" type="search" aria-label="Search activity" placeholder="Search activity…" autocomplete="off"></div>
+          <div id="events"></div>
+        </div>
       </aside>
     </div>
   </div>
@@ -270,6 +277,7 @@ body { margin: 0; }
   const NAME_KEY = "agent-hub-name";
   const THEME_KEY = "agent-hub-theme";
   const ACTIVITY_KEY = "agent-hub-activity";
+  const GROUPS_KEY = "agent-hub-groups";
   const STATUS_LABELS = { working: "Working", available: "Available", away: "Away" };
   const TASK_GROUPS = [["doing", "In progress"], ["blocked", "Blocked"], ["todo", "Todo"], ["done", "Done"]];
   const AVATAR_COLORS = [["#503567", "#f3d7ff"], ["#24515c", "#c8f5ff"], ["#5b3e27", "#ffe5c4"], ["#344c33", "#d8f8cb"], ["#503543", "#ffdae9"], ["#293e68", "#d5e3ff"], ["#555127", "#faf1bd"], ["#36504b", "#caf9e9"], ["#5a3840", "#ffdee0"], ["#403d70", "#dedbff"], ["#30505f", "#ccecff"], ["#4f4936", "#f6e9c5"]];
@@ -291,6 +299,10 @@ body { margin: 0; }
   let showActivity = readStored(ACTIVITY_KEY) !== "off";
   let activeTab = "tasks";
   let openTaskId = null;
+  // Task groups folded away in this browser; Done starts folded because it only grows.
+  let collapsedGroups = readCollapsedGroups();
+  // What the Activity tab is filtered by; kept for this page only.
+  let eventQuery = "";
   let lastLocks = [];
   let lastEvents = [];
   let lastMembers = [];
@@ -337,6 +349,7 @@ body { margin: 0; }
       renderSidePanels();
     });
     setActivityToggle();
+    setUpEvents();
     refresh();
     setInterval(refresh, REFRESH_MS);
   }
@@ -449,26 +462,50 @@ body { margin: 0; }
     $("task-title").disabled = !enabled;
     $("task-add").disabled = !enabled;
     $("task-count").textContent = tasks.filter((t) => t.status !== "done").length;
-    const key = JSON.stringify([tasks, enabled, currentName, openTaskId]);
+    const key = JSON.stringify([tasks, enabled, currentName, openTaskId, [...collapsedGroups]]);
     if (taskRenderKey === key) return;
     taskRenderKey = key;
     const focused = document.activeElement;
     const focusedId = focused?.dataset?.taskNote;
     const selection = focusedId ? [focused.selectionStart, focused.selectionEnd] : null;
-    const groups = TASK_GROUPS.map(([status, label]) => ({ label, items: tasks.filter((t) => t.status === status) })).filter((g) => g.items.length);
-    $("tasks").innerHTML = groups.length ? groups.map((g) => `
+    // Pull requests nobody has reviewed yet come first, with their buttons showing,
+    // so the human sees what waits on them without opening each task.
+    const waiting = tasks.filter(waitsForReview);
+    const groups = [
+      ...(waiting.length ? [{ status: "review", label: "Waiting for review", items: waiting, pinned: true }] : []),
+      ...TASK_GROUPS.map(([status, label]) => ({ status, label, items: tasks.filter((t) => t.status === status && !waitsForReview(t)) })),
+    ].filter((g) => g.items.length);
+    $("tasks").innerHTML = groups.length ? groups.map((g) => {
+      if (g.pinned) return `
+      <div class="review-group">
+        <div class="grp" style="cursor:default"><span class="warn">${g.label}</span><span class="tn" style="font-weight:400">${g.items.length}</span></div>
+        ${g.items.map((t) => taskCard(t, enabled, true)).join("")}
+      </div>`;
+      const folded = collapsedGroups.has(g.status);
+      return `
       <div>
-        <div class="grp">${g.label}<span class="tn" style="font-weight:400">${g.items.length}</span></div>
-        ${g.items.map((t) => taskCard(t, enabled)).join("")}
-      </div>`).join("") : `<div class="none">No tasks yet</div>`;
+        <button type="button" class="grp" data-group-toggle="${g.status}" aria-expanded="${!folded}">
+          <span class="chev" aria-hidden="true">${ICONS.chevron}</span>${g.label}<span class="tn" style="font-weight:400">${g.items.length}</span>
+        </button>
+        ${folded ? "" : g.items.map((t) => taskCard(t, enabled)).join("")}
+      </div>`;
+    }).join("") : `<div class="none">No tasks yet</div>`;
     if (focusedId) {
       const field = $("task-note-" + focusedId);
       if (field && !field.disabled) { field.focus(); field.setSelectionRange(...selection); }
     }
   }
 
-  /** One task: a toggle row, and when opened its note field and the actions this person may take. */
-  function taskCard(t, enabled) {
+  /** Whether a task's pull request has had no review yet (approvals and change requests both count). */
+  function waitsForReview(t) {
+    return reviewLabel(t) === "Needs review";
+  }
+
+  /**
+   * One task: a toggle row, and when opened its note field and the actions this
+   * person may take. With showReview the review buttons show without opening it.
+   */
+  function taskCard(t, enabled, showReview = false) {
     const heldByOther = t.owner && t.owner !== currentName && ["doing", "blocked"].includes(t.status);
     // A stale task (its owner went quiet) can be taken over by anyone.
     const actions = heldByOther && t.stale ? [["doing", "Take over"]] : heldByOther ? [] : t.status === "todo" ? [["doing", "Claim"]]
@@ -482,8 +519,10 @@ body { margin: 0; }
     const pr = t.pr ? `<a class="mono" href="https://github.com/${esc(project)}/pull/${esc(t.pr)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #${esc(t.pr)}</a>` : "";
     const stale = t.stale ? `<span class="warn" title="Its owner has been quiet for a while; anyone can take it over">Stale</span>` : "";
     const review = reviewLabel(t);
-    const reviewButtons = review && open ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${[["approved", "Approve"], ["changes", "Request changes"]].map(([verdict, label]) => `<button type="button" class="sbtn" data-review-pr="${esc(t.pr)}" data-verdict="${verdict}" aria-label="${label} PR #${esc(t.pr)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}</div>` : "";
-    const detail = !open ? "" : `<div class="tdetail">${reviewButtons}${actions.length
+    // The author cannot review their own task, so they get no buttons.
+    const reviewButtons = review && t.owner !== currentName ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${[["approved", "Approve"], ["changes", "Request changes"]].map(([verdict, label]) => `<button type="button" class="sbtn" data-review-pr="${esc(t.pr)}" data-verdict="${verdict}" aria-label="${label} PR #${esc(t.pr)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}${enabled ? "" : `<span class="sm mut" style="align-self:center">Sign in to review</span>`}</div>` : "";
+    const pinnedReview = showReview && !open && reviewButtons ? `<div class="tdetail">${reviewButtons}</div>` : "";
+    const detail = !open ? pinnedReview : `<div class="tdetail">${reviewButtons}${actions.length
       ? `<input class="inp" id="task-note-${esc(t.id)}" data-task-note="${esc(t.id)}" aria-label="Note for task #${esc(t.id)}" placeholder="Note (required to block)" value="${esc(taskNotes.get(t.id) ?? t.note ?? "")}"${enabled ? "" : " disabled"}>
          <div style="display:flex;flex-wrap:wrap;gap:6px">${actions.map(([status, label]) => `<button type="button" class="sbtn" data-task-id="${esc(t.id)}" data-status="${status}" aria-label="${label} task #${esc(t.id)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}</div>`
       : `<div class="sm mut">Held by ${esc(t.owner)}. Only they can move it.</div>`}</div>`;
@@ -520,6 +559,11 @@ body { margin: 0; }
       if (event.target.dataset.taskNote) taskNotes.set(Number(event.target.dataset.taskNote), event.target.value);
     });
     $("tasks").addEventListener("click", (event) => {
+      const group = event.target.closest("[data-group-toggle]");
+      if (group) {
+        toggleGroup(group.dataset.groupToggle);
+        return;
+      }
       const toggle = event.target.closest("[data-task-toggle]");
       if (toggle) {
         const id = Number(toggle.dataset.taskToggle);
@@ -532,6 +576,13 @@ body { margin: 0; }
       const button = event.target.closest("[data-task-id]");
       if (button && !button.disabled) moveDashboardTask(Number(button.dataset.taskId), button.dataset.status);
     });
+  }
+
+  /** Folds or unfolds one task group, remembering the choice in this browser. */
+  function toggleGroup(status) {
+    if (collapsedGroups.has(status)) collapsedGroups.delete(status); else collapsedGroups.add(status);
+    writeStored(GROUPS_KEY, JSON.stringify([...collapsedGroups]));
+    renderTasks(lastTasks);
   }
 
   /** Shows or clears the inline task error. */
@@ -599,7 +650,13 @@ body { margin: 0; }
   /** Shows the activity feed in the Activity tab, with file paths and task numbers in monospace. */
   function renderEvents(events) {
     $("event-count").textContent = events.length;
-    $("events").innerHTML = events.length ? events.map((e) => {
+    const query = eventQuery.trim().toLowerCase();
+    const shown = query ? events.filter((e) => `${e.agent} ${e.text} ${e.branch ?? ""}`.toLowerCase().includes(query)) : events;
+    if (!shown.length) {
+      $("events").innerHTML = `<div class="none">${query ? `No activity matches “${esc(eventQuery.trim())}”` : "No activity yet"}</div>`;
+      return;
+    }
+    $("events").innerHTML = shown.map((e) => {
       const { verb, obj, tail } = splitEvent(e.text);
       return `
         <div class="arow">
@@ -612,7 +669,7 @@ body { margin: 0; }
             ${e.branch ? `<span class="mono mut">on ${esc(e.branch)}</span>` : ""}
           </div>
         </div>`;
-    }).join("") : `<div class="none">No activity yet</div>`;
+    }).join("");
   }
 
   /**
@@ -822,6 +879,22 @@ body { margin: 0; }
       $(`tab-${tab}`).classList.toggle("on", tab === name);
       $(`tab-${tab}`).setAttribute("aria-selected", String(tab === name));
     }
+  }
+
+  /** Wires the Activity search box; Escape clears it, and the query lasts for this page only. */
+  function setUpEvents() {
+    const input = $("event-search");
+    if (!input) return;
+    const apply = () => {
+      eventQuery = input.value;
+      renderEvents(lastEvents.filter(inBranchFilter));
+    };
+    input.addEventListener("input", apply);
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !input.value) return;
+      input.value = "";
+      apply();
+    });
   }
 
   /** Wires the "Show activity" switch; the choice is remembered in this browser. */
@@ -1155,6 +1228,16 @@ body { margin: 0; }
     try { localStorage.setItem(key, value); } catch {}
   }
 
+  /** The task groups folded away in this browser; Done starts folded, and bad saved values fall back to that. */
+  function readCollapsedGroups() {
+    const saved = readStored(GROUPS_KEY);
+    if (!saved) return new Set(["done"]);
+    try {
+      const parsed = JSON.parse(saved);
+      return new Set(Array.isArray(parsed) ? parsed.filter((status) => TASK_GROUPS.some(([name]) => name === status)) : []);
+    } catch { return new Set(["done"]); }
+  }
+
   /** The robot icon used inside agent avatars, at the given pixel size. */
   function agentIcon(size) {
     return `<svg width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5.5" width="10" height="7.5" rx="2"/><path d="M8 5.5V3.4"/><circle cx="6" cy="9.2" r=".7" fill="currentColor"/><circle cx="10" cy="9.2" r=".7" fill="currentColor"/></svg>`;
@@ -1167,6 +1250,7 @@ body { margin: 0; }
     check: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="var(--fg)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Current user"><path d="M2.8 7.3l2.7 2.6 5.7-6"/></svg>',
     sun: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="2.7"/><path d="M8 1.8v1.4M8 12.8v1.4M1.8 8h1.4M12.8 8h1.4M3.6 3.6l1 1M11.4 11.4l1 1M3.6 12.4l1-1M11.4 4.6l1-1"/></svg>',
     moon: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg>',
+    chevron: '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 1.5L7 5l-3.5 3.5"/></svg>',
   };
   const TASK_ICONS = {
     todo: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="var(--icon)" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="5.5"/></svg>',

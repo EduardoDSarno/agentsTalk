@@ -122,3 +122,34 @@ test('the activity switch is remembered and starts on unless turned off', () => 
   assert.equal(p.stored['agent-hub-activity'], 'off');
   assert.equal(p.element('activity-toggle').attributes['aria-pressed'], 'false');
 });
+
+test('the Activity tab can be searched, and a miss says so', () => {
+  const p = page();
+  p.run(`lastEvents = ${JSON.stringify([
+    { at: at(1), agent: 'bob-agent', text: 'locked src/api.ts (adding search)', branch: 'feat/search' },
+    { at: at(2), agent: 'alice', text: 'moved task #2 to doing', branch: 'main' },
+  ])}; setUpEvents(); renderEvents(lastEvents)`);
+  const input = p.element('event-search');
+  assert.equal(p.element('event-count').textContent, 2, 'the tab badge keeps counting every event');
+
+  input.value = 'api';
+  input.listeners.input();
+  let html = p.element('events').innerHTML;
+  assert.ok(html.includes('src/api.ts'));
+  assert.ok(!html.includes('moved task'));
+
+  input.value = 'ALICE';
+  input.listeners.input();
+  html = p.element('events').innerHTML;
+  assert.ok(html.includes('moved task'), 'search is case-insensitive and matches the agent');
+
+  input.value = 'nothing-here';
+  input.listeners.input();
+  assert.match(p.element('events').innerHTML, /No activity matches/);
+
+  input.value = 'api';
+  input.listeners.input();
+  input.listeners.keydown({ key: 'Escape' });
+  assert.equal(input.value, '', 'Escape clears the box');
+  assert.ok(p.element('events').innerHTML.includes('moved task'));
+});
