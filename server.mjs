@@ -18,7 +18,12 @@ const PORT = Number(process.env.PORT ?? process.env.AGENT_HUB_PORT ?? DEFAULT_PO
 const ADMIN_TOKEN = process.env.AGENT_HUB_TOKEN ?? "";
 // Public Client ID of the GitHub OAuth App used for sign-in (device flow needs no secret).
 const GITHUB_OAUTH_CLIENT_ID = process.env.GITHUB_OAUTH_CLIENT_ID ?? "";
-const GITHUB_API = "https://api.github.com";
+// Overridable so tests can stand in for GitHub.
+const GITHUB_API = process.env.AGENTSTALK_GITHUB_API ?? "https://api.github.com";
+const GITHUB_WEB = process.env.AGENTSTALK_GITHUB_WEB ?? "https://github.com";
+const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
+// Private repos need this scope for GitHub to say whether someone can write to them.
+const PRIVATE_REPO_SCOPE = "repo";
 // GitHub permission flags that count as being on the repo's team.
 const WRITE_ROLES = ["admin", "maintain", "push"];
 const REPO_NAME_PATTERN = /^[\w.-]+\/[\w.-]+$/;
@@ -108,6 +113,8 @@ async function handleRequest(req, res) {
     if (req.method === "GET" && url.pathname === "/api/health") return sendJson(res, 200, { ok: db.prepare("SELECT 1 AS ok").get().ok === 1 });
     if (req.method === "GET" && url.pathname === "/api/config") return sendJson(res, 200, { githubClientId: GITHUB_OAUTH_CLIENT_ID });
     if (req.method === "POST" && url.pathname === "/api/auth/github") return sendJson(res, 200, await signIn(await readJson(req)));
+    if (req.method === "POST" && url.pathname === "/api/auth/device/start") return sendJson(res, 200, await startDeviceSignIn(await readJson(req)));
+    if (req.method === "POST" && url.pathname === "/api/auth/device/poll") return sendJson(res, 200, await pollDeviceSignIn(await readJson(req)));
     const caller = authenticate(req);
     if (!caller) return sendJson(res, 401, { error: "Missing or unknown key. Run the agentsTalk setup in the repo to get yours." });
     if (req.method === "POST" && url.pathname === "/api/admin/revoke") {
@@ -212,9 +219,54 @@ async function signIn({ githubToken, repo, tool: rawTool }) {
   const project = cleanProject(repoInfo.full_name);
   const key = crypto.randomBytes(KEY_BYTES).toString("base64url");
   store.keys[hashKey(key)] = { login, project, createdAt: Date.now() };
-  const agent = registerAgent(spaceFor(project), login, tool);
+  // A tool's setup names its agent; signing in on the dashboard only adds the person.
+  const space = spaceFor(project);
+  if (rawTool) registerAgent(space, login, tool);
+  else addPerson(space, login);
   saveStore();
-  return { key, login, project, agent };
+  return { key, login, project, agent: agentName(login, tool) };
+}
+
+/**
+ * Starts GitHub's device sign-in for the dashboard: GitHub gives a short code
+ * the person enters on github.com, signed in as whichever GitHub account they
+ * choose there. The hub talks to GitHub because browsers can't call these
+ * GitHub endpoints directly. Private repos ask for the repo scope, which
+ * GitHub needs to say whether the person can write to them.
+ */
+async function startDeviceSignIn({ repo }) {
+  if (!GITHUB_OAUTH_CLIENT_ID) throw httpError(503, "GitHub sign-in is not set up on this hub (GITHUB_OAUTH_CLIENT_ID)");
+  if (!REPO_NAME_PATTERN.test(repo ?? "")) throw httpError(400, "Name the repo as owner/name");
+  const isPublic = (await fetch(`${GITHUB_API}/repos/${repo}`, { headers: { accept: "application/vnd.github+json", "user-agent": "agentsTalk" } })).ok;
+  const device = await postToGitHub("/login/device/code", { client_id: GITHUB_OAUTH_CLIENT_ID, scope: isPublic ? "" : PRIVATE_REPO_SCOPE });
+  if (!device.device_code) throw httpError(502, `GitHub sign-in failed: ${device.error_description ?? device.error ?? "no device code"}`);
+  return { deviceCode: device.device_code, userCode: device.user_code, verificationUri: device.verification_uri, interval: device.interval ?? 5, expiresIn: device.expires_in ?? 900 };
+}
+
+/**
+ * Checks whether the person approved the code on GitHub. Until then it says
+ * to keep waiting (and how long, when GitHub asks to slow down); once
+ * approved it signs them in to the repo's team and returns their personal
+ * key. The GitHub token is used for that check and then forgotten.
+ */
+async function pollDeviceSignIn({ deviceCode, repo }) {
+  if (typeof deviceCode !== "string" || !deviceCode) throw httpError(400, "Send the device code from the start of sign-in");
+  const result = await postToGitHub("/login/oauth/access_token", { client_id: GITHUB_OAUTH_CLIENT_ID, device_code: deviceCode, grant_type: DEVICE_GRANT_TYPE });
+  if (result.access_token) return { done: true, ...(await signIn({ githubToken: result.access_token, repo })) };
+  if (result.error === "authorization_pending") return { done: false };
+  if (result.error === "slow_down") return { done: false, interval: result.interval };
+  const status = result.error === "expired_token" ? 410 : result.error === "access_denied" ? 403 : 400;
+  throw httpError(status, result.error === "expired_token" ? "The code expired; start again" : result.error === "access_denied" ? "Sign-in was cancelled on GitHub" : `GitHub sign-in failed: ${result.error_description ?? result.error ?? "unknown error"}`);
+}
+
+/** Posts a form to GitHub's sign-in endpoints and returns the JSON answer. */
+async function postToGitHub(route, fields) {
+  const response = await fetch(`${GITHUB_WEB}${route}`, {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded", "user-agent": "agentsTalk" },
+    body: new URLSearchParams(fields),
+  });
+  return response.json().catch(() => ({ error: `GitHub answered ${response.status}` }));
 }
 
 /**
@@ -491,6 +543,13 @@ function registerAgent(space, login, tool) {
   logEvent(space, login, isNewPerson ? `joined the project with ${name}` : `started working with ${name}`);
   saveStore();
   return name;
+}
+
+/** Adds a person to the project, without an agent yet, the first time they sign in. */
+function addPerson(space, login) {
+  if (space.members[login]) return;
+  space.members[login] = { joinedAt: Date.now(), agents: {} };
+  logEvent(space, login, "joined the project");
 }
 
 /** An agent's name: its person's GitHub login and the tool it runs in. */
