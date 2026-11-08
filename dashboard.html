@@ -266,7 +266,8 @@ body { margin: 0; }
 </div>
 <script>
   const REFRESH_MS = 2000;
-  const AGENT_SUFFIX = "-agent";
+  // Agents are named after their person and tool, "login/tool"; people are plain GitHub logins.
+  const isAgentName = (name) => String(name).includes("/");
   const EVERYONE = "all";
   const MAX_MESSAGE_CHARS = 1000; // keep equal to MAX_MESSAGE_CHARS in server.mjs
   const COUNTER_SHOW_RATIO = 0.8;
@@ -513,7 +514,7 @@ body { margin: 0; }
       : [[t.status === "blocked" ? "doing" : "blocked", t.status === "blocked" ? "Resume" : "Block"], ["done", "Done"], ["todo", "Release"]];
     const open = openTaskId === t.id;
     const owner = t.owner
-      ? `<span style="display:inline-flex;align-items:center;gap:5px;min-width:0">${personAvatar(t.owner, t.owner.endsWith(AGENT_SUFFIX), 16)}<span class="clip">${esc(t.owner)}</span></span>`
+      ? `<span style="display:inline-flex;align-items:center;gap:5px;min-width:0">${personAvatar(t.owner, isAgentName(t.owner), 16)}<span class="clip">${esc(t.owner)}</span></span>`
       : "<span>Unassigned</span>";
     // The pull request for this task, linked to GitHub (the project is owner/repo).
     const pr = t.pr ? `<a class="mono" href="https://github.com/${esc(project)}/pull/${esc(t.pr)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #${esc(t.pr)}</a>` : "";
@@ -633,12 +634,12 @@ body { margin: 0; }
   }
 
   /**
-   * A stable color links each person's messages and their agent across the
+   * A stable color links each person's messages and their agents across the
    * dashboard: people are round with an initial, agents rounded squares with
    * a robot. Dark and light themes get matching color pairs.
    */
   function personAvatar(name, agent, size, extraStyle = "") {
-    const identity = String(name ?? "").toLowerCase().replace(/-agent$/, "");
+    const identity = String(name ?? "").toLowerCase().split("/")[0];
     let hash = 0;
     for (const char of identity) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
     const [background, foreground] = AVATAR_COLORS[hash % AVATAR_COLORS.length];
@@ -672,6 +673,11 @@ body { margin: 0; }
     }).join("");
   }
 
+  /** Every agent of these members; hubs from before agent lists give one agent per person. */
+  function agentNames(members) {
+    return members.flatMap((m) => Array.isArray(m.agents) ? m.agents.map((a) => a.name) : m.agent ? [m.agent] : []);
+  }
+
   /**
    * Takes the project's members (people who ran the setup, named after their
    * GitHub accounts) and rebuilds the team line, the "Who are you?" list and
@@ -680,9 +686,10 @@ body { margin: 0; }
    */
   function setTeam(members) {
     teamMembers = members.map((m) => m.name).sort();
-    mentionable = [...teamMembers, ...members.map((m) => m.agent), EVERYONE];
+    mentionable = [...teamMembers, ...agentNames(members), EVERYONE];
     const people = `${teamMembers.length} ${teamMembers.length === 1 ? "person" : "people"}`;
-    const agents = `${members.length} ${members.length === 1 ? "agent" : "agents"}`;
+    const agentCount = agentNames(members).length;
+    const agents = `${agentCount} ${agentCount === 1 ? "agent" : "agents"}`;
     $("team-size").textContent = `${people} · ${agents}`;
     renderTeam(members);
     if (!currentName && $("picker").hidden && !setTeam.asked) {
@@ -702,7 +709,7 @@ body { margin: 0; }
     $("members").innerHTML = members.length ? [...members].sort((a, b) => a.name.localeCompare(b.name)).map((member) => {
       const person = member.person ?? {};
       const personStatus = statusOf(person.status);
-      const agent = member.agent || `${member.name}${AGENT_SUFFIX}`;
+      const agent = member.agent || "";
       const tasks = lastTasks.filter((t) => t.status === "doing" && t.owner === agent);
       const lockCount = Number.isFinite(member.locks) ? Math.max(0, Math.floor(member.locks)) : lastLocks.filter((l) => l.owner === agent).length;
       const agentStatus = Object.hasOwn(STATUS_LABELS, member.status) ? member.status : tasks.length || lockCount ? "working" : "away";
@@ -1005,7 +1012,7 @@ body { margin: 0; }
     $("send").disabled = !canSend();
     $("count").hidden = text.length < MAX_MESSAGE_CHARS * COUNTER_SHOW_RATIO;
     $("count").textContent = `${text.length} / ${MAX_MESSAGE_CHARS}`;
-    const match = /(?:^|\s)@([\w-]*)$/.exec(text);
+    const match = /(?:^|\s)@([\w/-]*)$/.exec(text);
     const query = match?.[1].toLowerCase();
     suggestions = match && !suggestionsDismissed ? mentionable.filter((n) => n.startsWith(query)).slice(0, MAX_SUGGESTIONS) : [];
     if (suggestions.length === 1 && suggestions[0] === query) suggestions = [];
@@ -1020,7 +1027,7 @@ body { margin: 0; }
     if (suggestions.length) $("draft").setAttribute("aria-activedescendant", `suggestion-${selectedSuggestion}`);
     else $("draft").removeAttribute("aria-activedescendant");
     $("suggest").innerHTML = suggestions.map((n, i) => {
-      const agent = n.endsWith(AGENT_SUFFIX);
+      const agent = isAgentName(n);
       const kind = n === EVERYONE ? "Everyone" : agent ? "Agent" : "Human";
       return `<button id="suggestion-${i}" role="option" aria-selected="${i === selectedSuggestion}" class="sug${i === selectedSuggestion ? " sel" : ""}" data-name="${esc(n)}">${n === EVERYONE ? `<span class="av av-h" style="width:18px;height:18px;font-size:10px">@</span>` : personAvatar(n, agent, 18)}<span>@${esc(n)}</span><span class="kind">${kind}</span></button>`;
     }).join("");
@@ -1029,7 +1036,7 @@ body { margin: 0; }
   /** Replaces the half-typed @word with the chosen name. */
   function insertMention(name) {
     const draft = $("draft");
-    draft.value = draft.value.replace(/@[\w-]*$/, `@${name} `);
+    draft.value = draft.value.replace(/@[\w/-]*$/, `@${name} `);
     draft.focus();
     updateComposer();
   }
@@ -1071,7 +1078,7 @@ body { margin: 0; }
     $("pick-list").innerHTML = teamMembers.length ? teamMembers.map((n) => `
       <button class="pick" data-name="${esc(n)}">
         ${personAvatar(n, false, 28)}
-        <span style="display:flex;flex-direction:column;min-width:0"><span style="font-size:14px;font-weight:500">${esc(n)}</span><span class="sm mut">with ${esc(n)}${AGENT_SUFFIX}</span></span>
+        <span style="display:flex;flex-direction:column;min-width:0"><span style="font-size:14px;font-weight:500">${esc(n)}</span><span class="sm mut">${esc(agentNames(lastMembers.filter((m) => m.name === n)).join(", ") || "no agents yet")}</span></span>
         ${n === currentName ? `<span style="margin-left:auto">${ICONS.check}</span>` : ""}
       </button>`).join("") : `<div class="none">Nobody has joined this project yet. Run <span class="mono">agentstalk</span> in the repo to join with your GitHub name.</div>`;
     $("picker-foot").hidden = !currentName;
@@ -1128,7 +1135,7 @@ body { margin: 0; }
 
   /** Escapes text and colors @mentions of team members, with the current user's own mentions tinted. */
   function highlightMentions(text) {
-    return esc(text).replace(/@([A-Za-z][\w-]*)/g, (whole, name) => {
+    return esc(text).replace(/@([A-Za-z][\w-]*(?:\/[\w-]+)?)/g, (whole, name) => {
       const lower = name.toLowerCase();
       if (!mentionable.includes(lower)) return whole;
       return `<span class="m${lower === currentName ? " m-me" : ""}">${whole}</span>`;

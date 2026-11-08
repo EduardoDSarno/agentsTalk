@@ -35,13 +35,13 @@ test('tasks can be added and moved over HTTP, and a task being worked on cannot 
 
   assert.equal((await call('/api/tasks', keys.alice, { title: '  ' })).status, 400, 'a task needs a title');
   // The admin token cannot invent an agent: it may only act as one linked to a signed-in GitHub person.
-  assert.equal((await call('/api/tasks?project=team/project&agent=ghost-agent', 'admin-tasks-key', { title: 'x' })).status, 403);  const added = await call('/api/tasks?as=human', keys.alice, { title: 'Write the docs' });
+  assert.equal((await call('/api/tasks?project=team/project&agent=ghost/agent', 'admin-tasks-key', { title: 'x' })).status, 403);  const added = await call('/api/tasks?as=human', keys.alice, { title: 'Write the docs' });
   assert.equal(added.status, 200);
   const id = added.body.id;
   assert.equal(added.body.status, 'todo');
 
   // Alice's agent claims it; bob's agent and bob himself are refused while it is in progress.
-  assert.equal((await call(`/api/tasks/${id}`, keys.alice, { status: 'doing', note: 'drafting' })).body.owner, 'alice-agent');
+  assert.equal((await call(`/api/tasks/${id}`, keys.alice, { status: 'doing', note: 'drafting' })).body.owner, 'alice/agent');
   assert.equal((await call(`/api/tasks/${id}`, keys.bob, { status: 'doing' })).status, 409);
   assert.equal((await call(`/api/tasks/${id}?as=human`, keys.bob, { status: 'done' })).status, 409);
   // The PR number is stored on the task, must be a positive whole number, and survives later updates.
@@ -57,8 +57,8 @@ test('tasks can be added and moved over HTTP, and a task being worked on cannot 
   assert.equal(released.body.owner, '');
 
   // Once free, bob's agent can take it and finish it; finished tasks keep their owner.
-  assert.equal((await call(`/api/tasks/${id}`, keys.bob, { status: 'doing' })).body.owner, 'bob-agent');
-  assert.equal((await call(`/api/tasks/${id}`, keys.bob, { status: 'done' })).body.owner, 'bob-agent');
+  assert.equal((await call(`/api/tasks/${id}`, keys.bob, { status: 'doing' })).body.owner, 'bob/agent');
+  assert.equal((await call(`/api/tasks/${id}`, keys.bob, { status: 'done' })).body.owner, 'bob/agent');
 
   assert.equal((await call(`/api/tasks/${id}`, keys.bob, { status: 'sleeping' })).status, 400);
   assert.equal((await call('/api/tasks/999', keys.bob, { status: 'doing' })).status, 404);

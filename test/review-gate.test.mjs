@@ -46,7 +46,7 @@ test('changes to main need another agent or a human to approve; the hook enforce
   assert.equal((await call('/api/status', keys.alice)).body.includes('Waiting for your review'), false, 'not shown to the author');
 
   // Not allowed to merge yet, and the author cannot approve their own work.
-  assert.match((await call('/api/merge-check?pr=7', keys.alice)).body.reason, /needs approval from someone other than alice-agent/);
+  assert.match((await call('/api/merge-check?pr=7', keys.alice)).body.reason, /needs approval from someone other than alice\/agent/);
   assert.equal((await call('/api/reviews', keys.alice, { pr: 7, verdict: 'approved' })).status, 403);
   assert.equal((await call('/api/merge-check?pr=99', keys.alice)).body.allowed, false, 'an unknown PR is not allowed');
 
@@ -68,8 +68,8 @@ test('changes to main need another agent or a human to approve; the hook enforce
 
   // Bob's agent asks for changes: still blocked, and alice's agent is told. A later approval from bob replaces it.
   await call('/api/reviews', keys.bob, { pr: 7, verdict: 'changes' });
-  assert.match((await call('/api/merge-check?pr=7', keys.alice)).body.reason, /bob-agent requested changes/);
-  assert.match((await call('/api/inbox', keys.alice)).body, /bob-agent requested changes on PR #7/);
+  assert.match((await call('/api/merge-check?pr=7', keys.alice)).body.reason, /bob\/agent requested changes/);
+  assert.match((await call('/api/inbox', keys.alice)).body, /bob\/agent requested changes on PR #7/);
   await call('/api/reviews', keys.bob, { pr: 7, verdict: 'approved', commit: 'abc1234' });
   assert.equal((await call('/api/merge-check?pr=7', keys.alice)).body.allowed, true);
   assert.equal(hook('gh pr merge 7 --squash').status, 0);
