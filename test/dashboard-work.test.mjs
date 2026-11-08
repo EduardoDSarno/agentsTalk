@@ -88,9 +88,9 @@ test('the activity tab lists newest first with paths in monospace and the branch
   assert.match(html, /on feat\/search/);
 });
 
-test('avatars use consistent colors for a person and their agent, in both themes', () => {
+test('avatars use consistent colors for a person and their agents, in both themes', () => {
   const { ui } = dashboard();
-  const alice = ui.personAvatar('alice', false, 24), agent = ui.personAvatar('alice-agent', true, 24), bob = ui.personAvatar('bob-agent', true, 24);
+  const alice = ui.personAvatar('alice', false, 24), agent = ui.personAvatar('alice/claude', true, 24), bob = ui.personAvatar('bob/codex', true, 24);
   const dark = (s) => s.match(/--avatar-bg:([^;]+)/)[1];
   const light = (s) => s.match(/--avatar-lbg:([^;]+)/)[1];
   assert.equal(dark(alice), dark(agent));

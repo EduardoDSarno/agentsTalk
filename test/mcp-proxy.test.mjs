@@ -29,8 +29,8 @@ test('Codex stdio bridge authenticates with local Git settings and forwards tool
  const transport=new StdioClientTransport({command:process.execPath,args:['agentstalk/mcp-proxy.mjs'],cwd:root,stderr:'pipe'});
  t.after(()=>client.close());await client.connect(transport);
  const tools=await client.listTools();assert.equal(tools.tools.length,9);
- const status=await client.callTool({name:'status',arguments:{}});assert.match(status.content[0].text,/friend-agent/);
+ const status=await client.callTool({name:'status',arguments:{}});assert.match(status.content[0].text,/friend\/agent/);
  const locked=await client.callTool({name:'lock_files',arguments:{paths:['app.js'],reason:'proxy integration'}});assert.match(locked.content[0].text,/Locked for you/);
- const response=await fetch(url+'/api/state',{headers:{authorization:`Bearer ${key}`}});const state=await response.json();assert.equal(state.locks[0].branch,'main');assert.equal(state.locks[0].owner,'friend-agent');
+ const response=await fetch(url+'/api/state',{headers:{authorization:`Bearer ${key}`}});const state=await response.json();assert.equal(state.locks[0].branch,'main');assert.equal(state.locks[0].owner,'friend/agent');
  const unlock=await client.callTool({name:'unlock_files',arguments:{paths:['app.js']}});assert.match(unlock.content[0].text,/Released/);
 });

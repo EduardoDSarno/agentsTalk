@@ -24,7 +24,11 @@ const WRITE_ROLES = ["admin", "maintain", "push"];
 const REPO_NAME_PATTERN = /^[\w.-]+\/[\w.-]+$/;
 const KEY_BYTES = 32;
 const KEY_TTL_MS = 30 * 24 * 60 * 60_000;
-const AGENT_SUFFIX = "-agent";
+// An agent is named after its person and the tool it runs in: "login/tool", e.g. "ana/claude".
+// Tools say which they are with the X-Agentstalk-Tool header; older kits send none and get "agent".
+const DEFAULT_TOOL = "agent";
+const TOOL_PATTERN = /^[a-z0-9][a-z0-9-]{0,19}$/;
+const MAX_AGENTS_PER_PERSON = 8;
 const LOCK_TTL_MINUTES = 20;
 const LOCK_TTL_MS = LOCK_TTL_MINUTES * 60_000;
 const MAX_EVENTS = 200;
@@ -56,7 +60,8 @@ const UNKNOWN_AGENT = "unknown";
 const DEFAULT_PROJECT = "default";
 // Projects are named after GitHub repos ("owner/name"), so a slash is allowed.
 const PROJECT_NAME_PATTERN = /[^a-z0-9._/-]/g;
-const MENTION_PATTERN = /@([a-z0-9_-]+)/gi;
+// "@ana" reaches the person, "@ana/claude" one of their agents.
+const MENTION_PATTERN = /@([a-z0-9_-]+(?:\/[a-z0-9_-]+)?)/gi;
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 // On a cloud host, point AGENT_HUB_DATA_DIR at a mounted disk so data survives redeploys.
 const DATA_DIR = process.env.AGENT_HUB_DATA_DIR ?? DIR;
@@ -116,15 +121,24 @@ async function handleRequest(req, res) {
       if (revoked) saveStore();
       return sendJson(res, 200, { revoked });
     }
+    if (req.method === "POST" && url.pathname === "/api/admin/rename-agent") {
+      if (!caller.admin) throw httpError(403, "Admin access required");
+      const { project: targetProject, from, to } = await readJson(req);
+      const project = cleanProject(targetProject);
+      return sendJson(res, 200, moveAgent(spaceFor(project), project, cleanName(from), cleanName(to)));
+    }
     const project = caller.admin ? cleanProject(url.searchParams.get("project")) : caller.project;
-    // Each person acts as their agent; the dashboard asks to act as the person.
+    // Each person acts as one of their agents, picked by the tool label; the dashboard asks to act as the person.
     const asHuman = url.searchParams.get("as") === "human";
-    const agent = caller.admin ? cleanName(url.searchParams.get("agent")) : asHuman ? caller.login : `${caller.login}${AGENT_SUFFIX}`;
+    const tool = cleanTool(req.headers["x-agentstalk-tool"] ?? url.searchParams.get("tool"));
+    const agent = caller.admin ? cleanName(url.searchParams.get("agent")) : asHuman ? caller.login : agentName(caller.login, tool);
     const space = spaceFor(project);
     // The admin may only act as an agent already linked to a signed-in GitHub person, so every agent maps to a real account.
-    if (caller.admin && !DASHBOARD_ROUTES.has(url.pathname) && !Object.values(space.members).some((member) => member.agent === agent)) {
+    if (caller.admin && !DASHBOARD_ROUTES.has(url.pathname) && !isMemberAgent(space, agent)) {
       throw httpError(403, `Agent "${agent}" is not linked to a GitHub account in ${project}. Sign in with GitHub (run agentstalk) and use your own key.`);
     }
+    // A person's key starts a new agent the first time it is used from another tool.
+    if (!caller.admin && !asHuman && !DASHBOARD_ROUTES.has(url.pathname)) registerAgent(space, caller.login, tool);
     // Recorded before any route answers, so even the dashboard's lightweight polls count as being present.
     const actor = DASHBOARD_ROUTES.has(url.pathname) ? (caller.admin ? undefined : caller.login) : agent;
     if (actor) touchPresence(space, actor);
@@ -186,7 +200,8 @@ async function handleRequest(req, res) {
  * write access get in, so a public repo stays safe. The GitHub token is used
  * for these two checks and never stored; only a hash of the new key is kept.
  */
-async function signIn({ githubToken, repo }) {
+async function signIn({ githubToken, repo, tool: rawTool }) {
+  const tool = cleanTool(rawTool);
   if (!githubToken || !REPO_NAME_PATTERN.test(repo ?? "")) throw httpError(400, "Send a GitHub token and the repo as owner/name");
   const user = await githubApi("/user", githubToken);
   const repoInfo = await githubApi(`/repos/${repo}`, githubToken);
@@ -197,8 +212,9 @@ async function signIn({ githubToken, repo }) {
   const project = cleanProject(repoInfo.full_name);
   const key = crypto.randomBytes(KEY_BYTES).toString("base64url");
   store.keys[hashKey(key)] = { login, project, createdAt: Date.now() };
-  joinProject(spaceFor(project), login, `${login}${AGENT_SUFFIX}`);
-  return { key, login, project, agent: `${login}${AGENT_SUFFIX}` };
+  const agent = registerAgent(spaceFor(project), login, tool);
+  saveStore();
+  return { key, login, project, agent };
 }
 
 /**
@@ -458,16 +474,98 @@ function takeNotices(space, agent) {
 }
 
 /**
- * Records a person and their agent as members of the project. The setup
- * script calls it with the person's GitHub name, and the dashboard builds
- * its team list and @mention suggestions from these members.
+ * Records that a person works with an agent in this tool, adding the person
+ * to the project the first time. A person can run several agents (one per
+ * tool, up to a few), and the dashboard builds its team list and @mention
+ * suggestions from these members. Returns the agent's name.
  */
-function joinProject(space, human, agent) {
-  const isNew = !space.members[human];
-  space.members[human] = { agent, joinedAt: space.members[human]?.joinedAt ?? Date.now() };
-  if (isNew) logEvent(space, human, `joined the project with ${agent}`);
+function registerAgent(space, login, tool) {
+  const name = agentName(login, tool);
+  const isNewPerson = !space.members[login];
+  const member = (space.members[login] ??= { joinedAt: Date.now(), agents: {} });
+  if (member.agents[tool]) return name;
+  if (Object.keys(member.agents).length >= MAX_AGENTS_PER_PERSON) {
+    throw httpError(403, `${login} already has ${MAX_AGENTS_PER_PERSON} agents in this project; remove one on the dashboard first`);
+  }
+  member.agents[tool] = { joinedAt: Date.now() };
+  logEvent(space, login, isNewPerson ? `joined the project with ${name}` : `started working with ${name}`);
   saveStore();
-  return { human, agent };
+  return name;
+}
+
+/** An agent's name: its person's GitHub login and the tool it runs in. */
+function agentName(login, tool) {
+  return `${login}/${tool}`;
+}
+
+/** Splits an agent's name into its person and tool; a name without a slash has no tool. */
+function splitAgentName(name) {
+  const slash = name.indexOf("/");
+  return slash < 0 ? { login: name, tool: "" } : { login: name.slice(0, slash), tool: name.slice(slash + 1) };
+}
+
+/** Whether the name is one of the project's agents, linked to a person who signed in. */
+function isMemberAgent(space, name) {
+  const { login, tool } = splitAgentName(name);
+  return Boolean(tool && space.members[login]?.agents[tool]);
+}
+
+/** Every agent in the project, by name. */
+function allAgents(space) {
+  return Object.entries(space.members).flatMap(([login, member]) => Object.keys(member.agents).map((tool) => agentName(login, tool)));
+}
+
+/** Reads the tool label a request names, e.g. "claude"; none means the default. */
+function cleanTool(raw) {
+  const tool = String(raw ?? "").trim().toLowerCase();
+  if (!tool) return DEFAULT_TOOL;
+  if (!TOOL_PATTERN.test(tool)) throw httpError(400, "The tool label must be 1-20 lowercase letters, digits or dashes, like claude or codex");
+  return tool;
+}
+
+/**
+ * Gives an agent a new name, possibly under another person (the hub admin
+ * uses it to fix names after the upgrade to "login/tool"). Its tasks, locks,
+ * reviews, notices, chat and activity follow it. The new person must already
+ * be in the project; a person left with no agents and no key is removed.
+ */
+function moveAgent(space, project, from, to) {
+  if (!isMemberAgent(space, from)) throw httpError(404, `${from} is not an agent in this project`);
+  const target = splitAgentName(to);
+  if (!space.members[target.login]) throw httpError(404, `${target.login} is not in this project; they sign in first`);
+  if (!TOOL_PATTERN.test(target.tool)) throw httpError(400, "Name the new agent as login/tool, like ana/claude");
+  if (isMemberAgent(space, to)) throw httpError(409, `${to} already exists`);
+  const source = splitAgentName(from);
+  const sourceMember = space.members[source.login];
+  space.members[target.login].agents[target.tool] = sourceMember.agents[source.tool];
+  delete sourceMember.agents[source.tool];
+  renameAgent(space, from, to);
+  const hasKey = Object.values(store.keys).some((record) => record.project === project && record.login === source.login);
+  if (!Object.keys(sourceMember.agents).length && !hasKey) delete space.members[source.login];
+  logEvent(space, "admin", `renamed ${from} to ${to}`);
+  saveStore();
+  return { from, to };
+}
+
+/** Rewrites every place a project refers to an agent by name. */
+function renameAgent(space, from, to) {
+  const swap = (name) => (name === from ? to : name);
+  for (const task of space.tasks) {
+    task.owner = swap(task.owner);
+    for (const review of task.reviews ?? []) review.by = swap(review.by);
+  }
+  for (const byBranch of Object.values(space.locks)) for (const lock of Object.values(byBranch)) lock.owner = swap(lock.owner);
+  for (const table of [space.presence, space.notices]) {
+    if (!(from in table)) continue;
+    table[to] = Array.isArray(table[from]) ? [...(table[to] ?? []), ...table[from]] : table[from];
+    delete table[from];
+  }
+  for (const message of space.messages) {
+    message.from = swap(message.from);
+    message.mentions = (message.mentions ?? []).map(swap);
+    message.readBy = (message.readBy ?? []).map(swap);
+  }
+  for (const event of space.events) event.agent = swap(event.agent);
 }
 
 /**
@@ -483,16 +581,20 @@ function removeMember(space, project, caller, login) {
   if (login === owner) throw httpError(400, "The repo owner cannot be removed");
   const member = space.members[login];
   if (!member) throw httpError(404, `${login} is not in this project`);
-  unlockFiles(space, member.agent);
+  const agents = Object.keys(member.agents).map((tool) => agentName(login, tool));
+  for (const agent of agents) {
+    unlockFiles(space, agent);
+    delete space.presence[agent];
+    delete space.notices[agent];
+  }
   delete space.members[login];
   delete space.presence[login];
-  delete space.presence[member.agent];
   for (const [hash, record] of Object.entries(store.keys)) {
     if (record.project === project && record.login === login) delete store.keys[hash];
   }
-  logEvent(space, caller.admin ? "admin" : caller.login, `removed ${login} and ${member.agent} from the project`);
+  logEvent(space, caller.admin ? "admin" : caller.login, `removed ${login}${agents.length ? ` and ${agents.join(", ")}` : ""} from the project`);
   saveStore();
-  return { removed: login, agent: member.agent };
+  return { removed: login, agents };
 }
 
 /** Remembers that this person or agent was just heard from; kept in memory, since it goes stale in minutes. */
@@ -609,8 +711,8 @@ function mergeCheck(space, pr) {
 
 /** Tells every other agent on the team that a pull request is waiting for a review, once. */
 function announceReviewNeeded(space, author, task) {
-  for (const member of Object.values(space.members)) {
-    if (member.agent !== author) addNotice(space, member.agent, `PR #${task.pr} (task #${task.id} by ${author}) needs a review before it merges: check it out, run the tests, read the diff, then call review_pr.`);
+  for (const agent of allAgents(space)) {
+    if (agent !== author) addNotice(space, agent, `PR #${task.pr} (task #${task.id} by ${author}) needs a review before it merges: check it out, run the tests, read the diff, then call review_pr.`);
   }
 }
 
@@ -643,7 +745,10 @@ function statusText(space, project, agent) {
     "Rules: check Team and Open tasks first. Claim a free task with update_task doing + a one-line plan note, lock files before editing, never edit a file locked by someone else, unlock after you push. Show progress with set_status or task notes; chat (`say`, @name) is for questions, handoffs and review verdicts, and is rate-limited. Hold locks only while you edit and release them when you stop or wait. Changes to main need approval from another agent or a human: set the task's pr, ask for a review, and merge only after review_pr approved it (gh pr merge is blocked until then). When a PR needs your review, check it out, run the tests, read the diff, then call review_pr.",
     "",
     "Team:",
-    ...(members.length ? members.map((m) => `- ${m.agent}: ${m.status}${m.doing ? ` — ${m.doing}` : ""}${m.lastSeen ? `, seen ${Math.round((now - m.lastSeen) / 60_000)} min ago` : ""}`) : ["- none"]),
+    ...(members.length ? members.flatMap((m) => [
+      `- ${m.name} (person): ${m.person.status}`,
+      ...m.agents.map((a) => `  - ${a.name}: ${a.status}${a.doing ? ` — ${a.doing}` : ""}${a.lastSeen ? `, seen ${Math.round((now - a.lastSeen) / 60_000)} min ago` : ""}`),
+    ]) : ["- none"]),
     "",
     "File locks:",
     ...(locks.length ? locks.map((l) => `- ${l.path} — ${l.owner} on ${branchLabel(l.branch)}${l.reason ? ` (${l.reason})` : ""}, ${l.minutesLeft} min left`) : ["- none"]),
@@ -674,14 +779,23 @@ function snapshot(space) {
       minutesLeft: Math.ceil((lock.expiresAt - now) / 60_000),
     }))),
     tasks: space.tasks.map((task) => ({ ...task, stale: isStale(space, task) })),
-    // The top-level fields describe the agent; `person` describes the human behind it.
+    // Each person with their own presence and their agents. The top-level agent fields repeat
+    // the most recently seen agent, for dashboards from before people had several agents.
     members: Object.entries(space.members).map(([name, member]) => {
-      const work = workOf(space, member.agent);
+      const agents = Object.keys(member.agents).map((tool) => {
+        const agent = agentName(name, tool);
+        const work = workOf(space, agent);
+        return { name: agent, tool, ...describePresence(space, agent, work), locks: work.locks };
+      });
+      const latest = [...agents].sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0))[0] ?? { name: "", status: "away", doing: "", lastSeen: null, locks: 0 };
       return {
         name,
-        agent: member.agent,
-        ...describePresence(space, member.agent, work),
-        locks: work.locks,
+        agent: latest.name,
+        status: latest.status,
+        doing: latest.doing,
+        lastSeen: latest.lastSeen,
+        locks: latest.locks,
+        agents,
         person: describePresence(space, name, { doing: "", locks: 0 }),
       };
     }),
@@ -897,8 +1011,24 @@ function normalizeStore(saved) {
     for (const [file, lock] of Object.entries(projects[name].locks)) {
       projects[name].locks[file] = Object.assign(Object.create(null), "owner" in lock ? { "": lock } : lock);
     }
+    upgradeMembers(projects[name]);
   }
   return { projects, keys };
+}
+
+/**
+ * Upgrades members from one agent each ({ agent: "ana-agent" }) to a list of
+ * agents named "login/tool". The old agent becomes "ana/agent", and every
+ * task, lock, message and event that named it follows. Already upgraded
+ * members are left alone, so this is safe on every start.
+ */
+function upgradeMembers(space) {
+  for (const [login, member] of Object.entries(space.members)) {
+    if (member.agents) continue;
+    const { agent: oldName, ...rest } = member;
+    space.members[login] = { ...rest, agents: { [DEFAULT_TOOL]: { joinedAt: member.joinedAt ?? Date.now() } } };
+    if (typeof oldName === "string" && oldName) renameAgent(space, oldName, agentName(login, DEFAULT_TOOL));
+  }
 }
 
 /** Saves whatever changed since the last save; called after every change. */

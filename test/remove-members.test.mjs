@@ -45,11 +45,11 @@ test('only the repo owner can remove a person; their key stops working and their
 
   const removed = await call('/api/members/remove', keys.boss, { login: 'bob' });
   assert.equal(removed.status, 200);
-  assert.equal(removed.body.agent, 'bob-agent');
+  assert.deepEqual(removed.body.agents, ['bob/agent']);
 
   const state = (await call('/api/state', keys.boss)).body;
   assert.deepEqual(state.members.map((member) => member.name).sort(), ['boss', 'carol']);
   assert.equal(state.locks.length, 0, 'their locks are released');
-  assert.match(state.events[0].text, /removed bob and bob-agent/);
+  assert.match(state.events[0].text, /removed bob and bob\/agent/);
   assert.equal((await call('/api/state', keys.bob)).status, 401, 'their key no longer works');
 });
