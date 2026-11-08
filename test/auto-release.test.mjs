@@ -46,6 +46,9 @@ test('locks are released only for files a successful git push really sent', asyn
   git(clone, 'add', '.');
   git(clone, 'commit', '-qm', 'base');
   git(clone, 'push', '-q', '-u', 'origin', 'main');
+  // Agents never push from main (the hook refuses), so the work happens on a branch that tracks its own upstream.
+  git(clone, 'checkout', '-qb', 'work');
+  git(clone, 'push', '-q', '-u', 'origin', 'work');
 
   const { AGENT_HUB_KEY, AGENT_HUB_URL, ...env } = process.env;
   const hook = (event, command) => execFileSync(process.execPath, [path.join(source, 'hook.mjs')], {
@@ -62,7 +65,7 @@ test('locks are released only for files a successful git push really sent', asyn
 
   // Four files are locked. One is committed and pushed, one committed but not pushed, one edited but not committed,
   // and one only locked (about to be edited).
-  await call('/api/lock?branch=main', { paths: ['pushed.txt', 'unpushed.txt', 'dirty.txt', 'untouched.txt'] });
+  await call('/api/lock?branch=work', { paths: ['pushed.txt', 'unpushed.txt', 'dirty.txt', 'untouched.txt'] });
   await fs.writeFile(path.join(clone, 'pushed.txt'), 'two\n');
   git(clone, 'commit', '-qam', 'change pushed');
   const everything = ['dirty.txt', 'pushed.txt', 'unpushed.txt', 'untouched.txt'];
@@ -77,7 +80,7 @@ test('locks are released only for files a successful git push really sent', asyn
 
   // The real push releases only the file it sent; locked-but-untouched files keep their locks.
   await fs.writeFile(path.join(clone, 'dirty.txt'), 'two\n');
-  push('git push origin main');
+  push('git push origin work');
   assert.deepEqual(await lockedPaths(), ['dirty.txt', 'unpushed.txt', 'untouched.txt']);
 
   // Later, committing and pushing the second file releases it too; the untouched one still stays locked.

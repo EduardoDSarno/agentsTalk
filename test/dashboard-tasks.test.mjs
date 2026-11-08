@@ -124,3 +124,23 @@ test('An in-flight response cannot insert a task into a newly selected project',
   assert.equal(b.run('lastTasks.length'), 0);
   assert.equal(b.element('task-title').value, 'New project draft');
 });
+
+test('A task with a pull request shows its review state and lets the human approve or ask for changes', async () => {
+  const withPr = (reviews) => ({ ...task(1, 'doing', 'bob-agent'), pr: 7, reviews });
+  const b = board([withPr([])]);
+  const label = (tasks) => { b.run(`taskRenderKey = ""; renderTasks(${JSON.stringify(tasks)})`); return b.element('tasks').innerHTML; };
+  assert.match(label([withPr([])]), /Needs review/);
+  assert.match(label([withPr([{ by: 'carol-agent', verdict: 'approved' }])]), /Approved by carol-agent/);
+  assert.match(label([withPr([{ by: 'carol-agent', verdict: 'changes' }])]), /Changes requested by carol-agent/);
+  assert.ok(!label([task(2, 'doing', 'bob-agent')]).includes('Needs review'), 'no PR, no review state');
+  assert.ok(!label([{ ...withPr([]), status: 'done' }]).includes('Needs review'), 'a finished task is not waiting');
+
+  // The buttons appear when the task is opened; clicking one sends the verdict as the human.
+  b.run('openTaskId = 1');
+  assert.match(label([withPr([])]), /Approve PR #7/);
+  b.respond(async () => ({ ok: true, json: async () => ({ ...withPr([{ by: 'alice', verdict: 'approved' }]) }) }));
+  b.element('tasks').listeners.click({ target: { closest: (selector) => (selector === '[data-review-pr]' ? { dataset: { reviewPr: '7', verdict: 'approved' }, disabled: false } : null) } });
+  await new Promise((resolve) => setTimeout(resolve));
+  assert.equal(b.requests[0].url, '/api/reviews?as=human');
+  assert.deepEqual(JSON.parse(b.requests[0].body), { pr: 7, verdict: 'approved' });
+});

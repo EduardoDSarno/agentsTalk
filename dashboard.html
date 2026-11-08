@@ -481,7 +481,9 @@ body { margin: 0; }
     // The pull request for this task, linked to GitHub (the project is owner/repo).
     const pr = t.pr ? `<a class="mono" href="https://github.com/${esc(project)}/pull/${esc(t.pr)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #${esc(t.pr)}</a>` : "";
     const stale = t.stale ? `<span class="warn" title="Its owner has been quiet for a while; anyone can take it over">Stale</span>` : "";
-    const detail = !open ? "" : `<div class="tdetail">${actions.length
+    const review = reviewLabel(t);
+    const reviewButtons = review && open ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${[["approved", "Approve"], ["changes", "Request changes"]].map(([verdict, label]) => `<button type="button" class="sbtn" data-review-pr="${esc(t.pr)}" data-verdict="${verdict}" aria-label="${label} PR #${esc(t.pr)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}</div>` : "";
+    const detail = !open ? "" : `<div class="tdetail">${reviewButtons}${actions.length
       ? `<input class="inp" id="task-note-${esc(t.id)}" data-task-note="${esc(t.id)}" aria-label="Note for task #${esc(t.id)}" placeholder="Note (required to block)" value="${esc(taskNotes.get(t.id) ?? t.note ?? "")}"${enabled ? "" : " disabled"}>
          <div style="display:flex;flex-wrap:wrap;gap:6px">${actions.map(([status, label]) => `<button type="button" class="sbtn" data-task-id="${esc(t.id)}" data-status="${status}" aria-label="${label} task #${esc(t.id)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}</div>`
       : `<div class="sm mut">Held by ${esc(t.owner)}. Only they can move it.</div>`}</div>`;
@@ -491,9 +493,19 @@ body { margin: 0; }
         <span style="display:flex;flex-direction:column;min-width:0">
           <span style="line-height:20px;overflow-wrap:anywhere;color:${t.status === "done" ? "var(--fg2)" : "var(--fg)"}">${esc(t.title)}</span>
           ${t.note ? `<span class="sm mut">${esc(t.note)}</span>` : ""}
-          <span class="sm mut" style="display:flex;align-items:center;gap:6px;margin-top:2px"><span class="mono tn">#${esc(t.id)}</span>${owner}${pr}${stale}</span>
+          <span class="sm mut" style="display:flex;align-items:center;gap:6px;margin-top:2px"><span class="mono tn">#${esc(t.id)}</span>${owner}${pr}${review ? `<span class="${review.startsWith("Approved") ? "" : "warn"}">${esc(review)}</span>` : ""}${stale}</span>
         </span>
       </button>${detail}</div>`;
+  }
+
+  /** Where a task's pull request stands for merging into main; empty when it has no open PR. */
+  function reviewLabel(t) {
+    if (!t.pr || t.status === "done") return "";
+    const reviews = t.reviews ?? [];
+    const objecting = reviews.filter((r) => r.verdict === "changes").map((r) => r.by);
+    if (objecting.length) return `Changes requested by ${objecting.join(", ")}`;
+    const approving = reviews.filter((r) => r.verdict === "approved").map((r) => r.by);
+    return approving.length ? `Approved by ${approving.join(", ")}` : "Needs review";
   }
 
   /** Whether the person may change tasks right now: signed in, connected and not already saving. */
@@ -515,6 +527,8 @@ body { margin: 0; }
         taskError();
         return renderTasks(lastTasks);
       }
+      const verdictButton = event.target.closest("[data-review-pr]");
+      if (verdictButton && !verdictButton.disabled && canChangeTasks()) return saveTask("/api/reviews", { pr: Number(verdictButton.dataset.reviewPr), verdict: verdictButton.dataset.verdict });
       const button = event.target.closest("[data-task-id]");
       if (button && !button.disabled) moveDashboardTask(Number(button.dataset.taskId), button.dataset.status);
     });

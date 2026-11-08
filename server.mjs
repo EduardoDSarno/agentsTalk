@@ -34,6 +34,8 @@ const CHAT_READ_DEFAULT = 20;
 const CHAT_READ_MAX = 100;
 const RECENT_EVENTS_IN_STATUS = 10;
 const TASK_STATUSES = ["todo", "doing", "blocked", "done"];
+const REVIEW_VERDICTS = ["approved", "changes"];
+const MAX_COMMIT_CHARS = 40;
 // Agents chat sparingly: a broadcast line (no @mention) at most this often, and only a few directed messages per window.
 const BROADCAST_INTERVAL_MS = 5 * 60_000;
 const DIRECTED_LIMIT = 6;
@@ -149,6 +151,11 @@ async function handleRequest(req, res) {
       if (!TASK_STATUSES.includes(body.status)) throw httpError(400, `status must be one of ${TASK_STATUSES.join(", ")}`);
       return sendJson(res, 200, updateTask(space, agent, Number(taskRoute[1]), body.status, body.note, body.pr));
     }
+    if (req.method === "POST" && url.pathname === "/api/reviews") {
+      const body = await readJson(req);
+      return sendJson(res, 200, reviewPr(space, agent, Number(body.pr), body.verdict, body.commit));
+    }
+    if (req.method === "GET" && url.pathname === "/api/merge-check") return sendJson(res, 200, mergeCheck(space, Number(url.searchParams.get("pr"))));
     if (req.method === "GET" && url.pathname === "/api/status") return sendText(res, statusText(space, project, agent));
     if (req.method === "GET" && url.pathname === "/api/inbox") return sendText(res, formatInbox(space, agent));
     if (req.method === "POST" && url.pathname === "/api/chat") {
@@ -283,6 +290,11 @@ function buildMcpServer(space, project, agent) {
     description: "Move a task: todo, doing, blocked (say why in the note) or done. Setting it to 'doing' claims it; a task someone else is doing or is blocked on is refused, and 'todo' releases yours.",
     inputSchema: { id: z.number().int(), status: z.enum(TASK_STATUSES), note: z.string().optional(), pr: z.number().int().positive().optional().describe("Pull request number for this task; set it when you open the PR") },
   }, async ({ id, status, note, pr }) => reply(`Task #${updateTask(space, agent, id, status, note, pr).id} is now ${status}`));
+
+  server.registerTool("review_pr", {
+    description: "Review a teammate's pull request after you checked it out, ran the tests and read the diff. 'approved' lets it merge into main; 'changes' blocks it until fixed. You cannot review your own task's PR.",
+    inputSchema: { pr: z.number().int().positive(), verdict: z.enum(REVIEW_VERDICTS), commit: z.string().optional().describe("The commit you reviewed (git rev-parse HEAD in the PR branch)") },
+  }, async ({ pr, verdict, commit }) => reply(`PR #${pr}: ${verdict} recorded on task #${reviewPr(space, agent, pr, verdict, commit).id}`));
 
   server.registerTool("set_status", {
     description: "Tell the team what you're doing without posting in chat: status working, available or away, plus a short 'doing' line. Shows in the dashboard's team panel. Use it for progress instead of chat.",
@@ -551,10 +563,60 @@ function updateTask(space, agent, id, status, note, pr) {
   if (status === "doing") task.owner = agent;
   if (status === "todo") task.owner = "";
   if (note !== undefined) task.note = note;
-  if (pr !== undefined) task.pr = pr;
+  if (pr !== undefined && pr !== task.pr) {
+    task.pr = pr;
+    task.reviews = [];
+    announceReviewNeeded(space, agent, task);
+  }
   logEvent(space, agent, `moved task #${id} to ${status}${note ? ` (${note})` : ""}`);
   saveStore();
   return task;
+}
+
+/**
+ * Records a review of the pull request linked to a task. Changes to main
+ * need approval from someone other than the author (another agent or a
+ * human), so a person cannot review their own agent's work as that agent.
+ * A reviewer's newest verdict replaces their older one, and the author is
+ * told what was decided.
+ */
+function reviewPr(space, reviewer, pr, verdict, commit) {
+  const task = space.tasks.find((candidate) => candidate.pr === pr);
+  if (!task) throw httpError(404, `No task is linked to PR #${pr}. The author links it with update_task pr.`);
+  if (reviewer === task.owner) throw httpError(403, `${reviewer} owns task #${task.id}, so someone else has to review PR #${pr}`);
+  if (!REVIEW_VERDICTS.includes(verdict)) throw httpError(400, `verdict must be one of ${REVIEW_VERDICTS.join(", ")}`);
+  task.reviews = [...(task.reviews ?? []).filter((review) => review.by !== reviewer), { by: reviewer, verdict, commit: String(commit ?? "").slice(0, MAX_COMMIT_CHARS), at: Date.now() }];
+  if (task.owner) addNotice(space, task.owner, `${reviewer} ${verdict === "approved" ? "approved" : "requested changes on"} PR #${pr} (task #${task.id}).`);
+  logEvent(space, reviewer, `${verdict === "approved" ? "approved" : "requested changes on"} PR #${pr}`);
+  saveStore();
+  return task;
+}
+
+/**
+ * Says whether a pull request may merge into main: someone other than the
+ * author approved it and nobody has open change requests. The hook asks this
+ * before an agent merges, so the rule holds without trusting the agent.
+ */
+function mergeCheck(space, pr) {
+  const task = space.tasks.find((candidate) => candidate.pr === pr);
+  if (!task) return { allowed: false, reason: `No task is linked to PR #${pr}. Link it with update_task pr, then ask another agent or a human to review it.` };
+  const reviews = task.reviews ?? [];
+  const objecting = reviews.filter((review) => review.verdict === "changes").map((review) => review.by);
+  if (objecting.length) return { allowed: false, reason: `${objecting.join(", ")} requested changes on PR #${pr}. Fix them and ask for a new review.` };
+  if (!reviews.some((review) => review.verdict === "approved")) return { allowed: false, reason: `PR #${pr} needs approval from someone other than ${task.owner || "its author"} (another agent or a human) before it merges. Ask for a review with say, @mentioning them.` };
+  return { allowed: true, reason: "" };
+}
+
+/** Tells every other agent on the team that a pull request is waiting for a review, once. */
+function announceReviewNeeded(space, author, task) {
+  for (const member of Object.values(space.members)) {
+    if (member.agent !== author) addNotice(space, member.agent, `PR #${task.pr} (task #${task.id} by ${author}) needs a review before it merges: check it out, run the tests, read the diff, then call review_pr.`);
+  }
+}
+
+/** Lists the open pull requests the agent could review: linked to a task, not its own, not yet approved. */
+function reviewQueue(space, agent) {
+  return space.tasks.filter((task) => task.pr && task.status !== "done" && task.owner !== agent && !(task.reviews ?? []).some((review) => review.verdict === "approved"));
 }
 
 /**
@@ -578,7 +640,7 @@ function statusText(space, project, agent) {
   const open = tasks.filter((t) => t.status !== "done");
   const lines = [
     `agentsTalk team hub — project "${project}", you are "${agent}".`,
-    "Rules: check Team and Open tasks first. Claim a free task with update_task doing + a one-line plan note, lock files before editing, never edit a file locked by someone else, unlock after you push. Show progress with set_status or task notes; chat (`say`, @name) is for questions, handoffs and review verdicts, and is rate-limited.",
+    "Rules: check Team and Open tasks first. Claim a free task with update_task doing + a one-line plan note, lock files before editing, never edit a file locked by someone else, unlock after you push. Show progress with set_status or task notes; chat (`say`, @name) is for questions, handoffs and review verdicts, and is rate-limited. Hold locks only while you edit and release them when you stop or wait. Changes to main need approval from another agent or a human: set the task's pr, ask for a review, and merge only after review_pr approved it (gh pr merge is blocked until then). When a PR needs your review, check it out, run the tests, read the diff, then call review_pr.",
     "",
     "Team:",
     ...(members.length ? members.map((m) => `- ${m.agent}: ${m.status}${m.doing ? ` — ${m.doing}` : ""}${m.lastSeen ? `, seen ${Math.round((now - m.lastSeen) / 60_000)} min ago` : ""}`) : ["- none"]),
@@ -589,6 +651,7 @@ function statusText(space, project, agent) {
     "Open tasks:",
     ...(open.length ? open.map((t) => `- #${t.id} [${t.status}] ${t.owner ? t.owner : "unclaimed"}${t.stale ? " (stale, you may take it over)" : ""}: ${t.title}${t.pr ? ` [PR #${t.pr}]` : ""}${t.note ? ` (${t.note})` : ""}`) : ["- none"]),
     ...(tasks.length > open.length ? [`(${tasks.length - open.length} done)`] : []),
+    ...(reviewQueue(space, agent).length ? ["", "Waiting for your review (changes to main need another agent or a human):", ...reviewQueue(space, agent).map((t) => `- PR #${t.pr} — task #${t.id} by ${t.owner || "unassigned"}: ${t.title}`)] : []),
     "",
     formatInbox(space, agent) || "No new chat messages for you.",
     "",
