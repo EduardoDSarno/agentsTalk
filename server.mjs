@@ -14,10 +14,18 @@ process.umask(0o077);
 const DEFAULT_PORT = 4000;
 // Cloud hosts such as Railway assign the port through PORT.
 const PORT = Number(process.env.PORT ?? process.env.AGENT_HUB_PORT ?? DEFAULT_PORT);
-// The hub owner's admin token; never put it in a repo. Teammates use personal keys instead.
+// Optional master key for whoever hosts the hub; leave it unset to turn it off. Teams never need it:
+// everyone signs in with GitHub, and each repo's owner manages their own team.
 const ADMIN_TOKEN = process.env.AGENT_HUB_TOKEN ?? "";
-// Public Client ID of the GitHub OAuth App used for sign-in (device flow needs no secret).
+// The GitHub OAuth App used for sign-in. The Client ID alone allows the device flow (a code to type);
+// with the Client Secret too, the dashboard signs in by redirecting to GitHub and back.
 const GITHUB_OAUTH_CLIENT_ID = process.env.GITHUB_OAUTH_CLIENT_ID ?? "";
+const GITHUB_OAUTH_CLIENT_SECRET = process.env.GITHUB_OAUTH_CLIENT_SECRET ?? "";
+// The hub's public address, for GitHub's callback; worked out from the request when unset.
+const PUBLIC_URL = (process.env.AGENTSTALK_PUBLIC_URL ?? "").replace(/\/+$/, "");
+const OAUTH_CALLBACK_PATH = "/auth/github/callback";
+const OAUTH_STATE_COOKIE = "agentstalk_oauth";
+const OAUTH_STATE_TTL_MS = 10 * 60_000;
 // Overridable so tests can stand in for GitHub.
 const GITHUB_API = process.env.AGENTSTALK_GITHUB_API ?? "https://api.github.com";
 const GITHUB_WEB = process.env.AGENTSTALK_GITHUB_WEB ?? "https://github.com";
@@ -49,7 +57,7 @@ const MAX_COMMIT_CHARS = 40;
 const MAX_BODY_BYTES = 64 * 1024;
 const RATE_WINDOW_MS = 10 * 60_000;
 // Per address and window. A device sign-in polls about every 5 seconds for up to 15 minutes.
-const RATE_LIMITS = { "/api/auth/github": 10, "/api/auth/device/start": 10, "/api/auth/device/poll": 240 };
+const RATE_LIMITS = { "/api/auth/github": 10, "/api/auth/device/start": 10, "/api/auth/device/poll": 240, "/auth/github/start": 20 };
 // Agents chat sparingly: a broadcast line (no @mention) at most this often, and only a few directed messages per window.
 const BROADCAST_INTERVAL_MS = 5 * 60_000;
 const DIRECTED_LIMIT = 6;
@@ -98,6 +106,8 @@ ensureSnapshot();
 const recentAgentPosts = new Map();
 /** Recent sign-in requests per route and address, for the sign-in rate limits. */
 const recentAuthRequests = new Map();
+/** GitHub web sign-ins in progress: the random state sent to GitHub, with the repo and when it started. */
+const pendingWebSignIns = new Map();
 
 http.createServer(handleRequest).listen(PORT, () => {
   console.log(`agentsTalk running on port ${PORT}${GITHUB_OAUTH_CLIENT_ID ? "" : " (GITHUB_OAUTH_CLIENT_ID not set: GitHub sign-in is off)"}`);
@@ -118,9 +128,11 @@ async function handleRequest(req, res) {
   const branch = cleanBranch(url.searchParams.get("branch"));
   try {
     if (url.pathname === "/") return sendFile(res, DASHBOARD_FILE);
-    if (req.method === "POST" && url.pathname in RATE_LIMITS) enforceRateLimit(url.pathname, clientAddress(req));
+    if (url.pathname in RATE_LIMITS) enforceRateLimit(url.pathname, clientAddress(req));
     if (req.method === "GET" && url.pathname === "/api/health") return sendJson(res, 200, { ok: db.prepare("SELECT 1 AS ok").get().ok === 1 });
-    if (req.method === "GET" && url.pathname === "/api/config") return sendJson(res, 200, { githubClientId: GITHUB_OAUTH_CLIENT_ID });
+    if (req.method === "GET" && url.pathname === "/api/config") return sendJson(res, 200, { githubClientId: GITHUB_OAUTH_CLIENT_ID, webSignIn: Boolean(GITHUB_OAUTH_CLIENT_ID && GITHUB_OAUTH_CLIENT_SECRET) });
+    if (req.method === "GET" && url.pathname === "/auth/github/start") return await startWebSignIn(req, res, url);
+    if (req.method === "GET" && url.pathname === OAUTH_CALLBACK_PATH) return await finishWebSignIn(req, res, url);
     if (req.method === "POST" && url.pathname === "/api/auth/github") return sendJson(res, 200, await signIn(await readJson(req)));
     if (req.method === "POST" && url.pathname === "/api/auth/device/start") return sendJson(res, 200, await startDeviceSignIn(await readJson(req)));
     if (req.method === "POST" && url.pathname === "/api/auth/device/poll") return sendJson(res, 200, await pollDeviceSignIn(await readJson(req)));
@@ -161,6 +173,11 @@ async function handleRequest(req, res) {
     if (req.method === "GET" && url.pathname === "/api/me") return sendJson(res, 200, { login: caller.login, project, admin: caller.admin });
     if (req.method === "GET" && url.pathname === "/api/projects") return sendJson(res, 200, listProjects(caller));
     if (url.pathname === "/mcp") return await handleMcp(req, res, space, project, agent);
+    if (req.method === "POST" && url.pathname === "/api/agents/rename") {
+      const { from, to } = await readJson(req);
+      if (!caller.admin && caller.login !== project.split("/")[0]) throw httpError(403, "Only the repo owner can rename agents");
+      return sendJson(res, 200, moveAgent(space, project, cleanName(from), cleanName(to)));
+    }
     if (req.method === "POST" && url.pathname === "/api/members/remove") {
       const { login } = await readJson(req);
       return sendJson(res, 200, removeMember(space, project, caller, cleanName(login)));
@@ -222,7 +239,7 @@ async function signIn({ githubToken, repo, tool: rawTool }) {
   const user = await githubApi("/user", githubToken);
   const repoInfo = await githubApi(`/repos/${repo}`, githubToken);
   if (!WRITE_ROLES.some((role) => repoInfo.permissions?.[role])) {
-    throw httpError(403, `${user.login} can't write to ${repo} on GitHub, so they can't join its team`);
+    throw Object.assign(httpError(403, `${user.login} can't write to ${repo} on GitHub, so they can't join its team`), { login: cleanName(user.login) });
   }
   const login = cleanName(user.login);
   const project = cleanProject(repoInfo.full_name);
@@ -246,8 +263,7 @@ async function signIn({ githubToken, repo, tool: rawTool }) {
 async function startDeviceSignIn({ repo }) {
   if (!GITHUB_OAUTH_CLIENT_ID) throw httpError(503, "GitHub sign-in is not set up on this hub (GITHUB_OAUTH_CLIENT_ID)");
   if (!REPO_NAME_PATTERN.test(repo ?? "")) throw httpError(400, "Name the repo as owner/name");
-  const isPublic = (await fetch(`${GITHUB_API}/repos/${repo}`, { headers: { accept: "application/vnd.github+json", "user-agent": "agentsTalk" } })).ok;
-  const device = await postToGitHub("/login/device/code", { client_id: GITHUB_OAUTH_CLIENT_ID, scope: isPublic ? "" : PRIVATE_REPO_SCOPE });
+  const device = await postToGitHub("/login/device/code", { client_id: GITHUB_OAUTH_CLIENT_ID, scope: await scopeFor(repo) });
   if (!device.device_code) throw httpError(502, `GitHub sign-in failed: ${device.error_description ?? device.error ?? "no device code"}`);
   return { deviceCode: device.device_code, userCode: device.user_code, verificationUri: device.verification_uri, interval: device.interval ?? 5, expiresIn: device.expires_in ?? 900 };
 }
@@ -266,6 +282,86 @@ async function pollDeviceSignIn({ deviceCode, repo }) {
   if (result.error === "slow_down") return { done: false, interval: result.interval };
   const status = result.error === "expired_token" ? 410 : result.error === "access_denied" ? 403 : 400;
   throw httpError(status, result.error === "expired_token" ? "The code expired; start again" : result.error === "access_denied" ? "Sign-in was cancelled on GitHub" : `GitHub sign-in failed: ${result.error_description ?? result.error ?? "unknown error"}`);
+}
+
+/**
+ * The GitHub permission sign-in asks for: none for a public repo (GitHub then
+ * shares only the public profile), the repo scope for a private one, which
+ * GitHub needs before it says whether the person can write to it.
+ */
+async function scopeFor(repo) {
+  const isPublic = (await fetch(`${GITHUB_API}/repos/${repo}`, { headers: { accept: "application/vnd.github+json", "user-agent": "agentsTalk" } })).ok;
+  return isPublic ? "" : PRIVATE_REPO_SCOPE;
+}
+
+/**
+ * Starts GitHub's web sign-in: sends the browser to GitHub with a random
+ * state, kept here and in a short-lived cookie, so the callback can prove it
+ * answers this browser's own sign-in (and not a link someone else made).
+ * "switch=1" asks GitHub to let the person pick which account to use.
+ */
+async function startWebSignIn(req, res, url) {
+  const repo = String(url.searchParams.get("repo") ?? "").trim();
+  if (!GITHUB_OAUTH_CLIENT_ID || !GITHUB_OAUTH_CLIENT_SECRET) return redirectToLogin(res, repo, "unavailable");
+  if (!REPO_NAME_PATTERN.test(repo)) return redirectToLogin(res, "", "bad_repo");
+  const state = crypto.randomBytes(24).toString("base64url");
+  pendingWebSignIns.set(state, { repo, at: Date.now() });
+  for (const [old, pending] of pendingWebSignIns) if (Date.now() - pending.at > OAUTH_STATE_TTL_MS) pendingWebSignIns.delete(old);
+  const authorize = new URL(`${GITHUB_WEB}/login/oauth/authorize`);
+  authorize.search = new URLSearchParams({
+    client_id: GITHUB_OAUTH_CLIENT_ID,
+    redirect_uri: callbackUrl(req),
+    scope: await scopeFor(repo),
+    state,
+    allow_signup: "false",
+    ...(url.searchParams.get("switch") === "1" ? { prompt: "select_account" } : {}),
+  }).toString();
+  const secure = callbackUrl(req).startsWith("https:") ? "; Secure" : "";
+  res.writeHead(302, {
+    location: authorize.toString(),
+    "set-cookie": `${OAUTH_STATE_COOKIE}=${state}; Path=/auth/github; Max-Age=${OAUTH_STATE_TTL_MS / 1000}; HttpOnly; SameSite=Lax${secure}`,
+    ...SECURITY_HEADERS,
+  });
+  res.end();
+}
+
+/**
+ * GitHub sends the browser back here. With a matching state, the code is
+ * traded for a GitHub token, which signs the person in to the repo's team and
+ * is then forgotten. The personal key goes back in the part of the address
+ * after "#", which browsers never send to servers, and the dashboard saves it.
+ */
+async function finishWebSignIn(req, res, url) {
+  const state = url.searchParams.get("state") ?? "";
+  const pending = pendingWebSignIns.get(state);
+  const cookie = String(req.headers.cookie ?? "").split(";").map((part) => part.trim()).find((part) => part.startsWith(`${OAUTH_STATE_COOKIE}=`))?.slice(OAUTH_STATE_COOKIE.length + 1);
+  pendingWebSignIns.delete(state);
+  const clearCookie = `${OAUTH_STATE_COOKIE}=; Path=/auth/github; Max-Age=0; HttpOnly; SameSite=Lax`;
+  if (!pending || !cookie || !safeEqual(cookie, state) || Date.now() - pending.at > OAUTH_STATE_TTL_MS) return redirectToLogin(res, pending?.repo ?? "", "expired", "", clearCookie);
+  if (url.searchParams.get("error")) return redirectToLogin(res, pending.repo, url.searchParams.get("error") === "access_denied" ? "cancelled" : "failed", "", clearCookie);
+  const result = await postToGitHub("/login/oauth/access_token", { client_id: GITHUB_OAUTH_CLIENT_ID, client_secret: GITHUB_OAUTH_CLIENT_SECRET, code: url.searchParams.get("code") ?? "", redirect_uri: callbackUrl(req) });
+  if (!result.access_token) return redirectToLogin(res, pending.repo, "failed", "", clearCookie);
+  try {
+    const signedIn = await signIn({ githubToken: result.access_token, repo: pending.repo });
+    res.writeHead(302, { location: `/?project=${encodeURIComponent(signedIn.project)}#key=${encodeURIComponent(signedIn.key)}`, "set-cookie": clearCookie, ...SECURITY_HEADERS });
+    res.end();
+  } catch (error) {
+    redirectToLogin(res, pending.repo, error.status === 403 ? "no_access" : "failed", error.login ?? "", clearCookie);
+  }
+}
+
+/** Sends the browser back to the login page with what went wrong, for it to explain. */
+function redirectToLogin(res, repo, reason, login = "", cookie = "") {
+  const params = new URLSearchParams({ ...(repo ? { project: repo.toLowerCase() } : {}), login_error: reason, ...(login ? { login } : {}) });
+  res.writeHead(302, { location: `/?${params}`, ...(cookie ? { "set-cookie": cookie } : {}), ...SECURITY_HEADERS });
+  res.end();
+}
+
+/** Where GitHub sends people back to: the configured public address, or this request's own (HTTPS behind Railway's proxy). */
+function callbackUrl(req) {
+  if (PUBLIC_URL) return `${PUBLIC_URL}${OAUTH_CALLBACK_PATH}`;
+  const proto = String(req.headers["x-forwarded-proto"] ?? "").split(",")[0].trim() || (req.socket.encrypted ? "https" : "http");
+  return `${proto}://${req.headers.host}${OAUTH_CALLBACK_PATH}`;
 }
 
 /** Posts a form to GitHub's sign-in endpoints and returns the JSON answer. */

@@ -93,20 +93,26 @@ Personal hub keys live in local Git config. The cached GitHub sign-in lives in
 `~/.agentstalk/github.json` with owner-only permissions. Never commit or share
 personal dashboard links or the credentials printed for manual MCP setup.
 Hub keys expire after 30 days; run `npx agentstalk@latest` in the repository to
-sign in again. If someone loses repository access, the hub administrator should
-revoke their keys immediately: POST to `/api/admin/revoke` with the admin token
-in the Authorization header and JSON `{"project":"owner/repo","login":"username"}`.
-Existing access is otherwise valid until expiry; GitHub access is checked again
-when the person signs in. Keep the Railway volume backed up: hub state is saved
+sign in again. If someone loses repository access, the repo's owner should remove
+them from the team with the Remove button in the dashboard's Team list, which
+stops their keys at once. Existing access is otherwise valid until expiry; GitHub
+access is checked again when the person signs in. Keep the Railway volume backed up: hub state is saved
 atomically with a recovery copy, but storage loss can still remove both copies.
 
 ### Use your own hub
 
 The hub owner can deploy this repository to Railway with `npm start`, a persistent
-volume mounted at `/data`, `AGENT_HUB_DATA_DIR=/data`, a private random
-`AGENT_HUB_TOKEN`, and `GITHUB_OAUTH_CLIENT_ID` from a GitHub OAuth App with Device
-Flow enabled. Railway supplies `PORT`. Set the OAuth App homepage to the hub URL
-and its callback to `<hub>/auth/github/callback`.
+volume mounted at `/data`, `AGENT_HUB_DATA_DIR=/data`, and a GitHub OAuth App with
+Device Flow enabled: set `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`.
+Railway supplies `PORT`. Set the OAuth App homepage to the hub URL and its
+callback to `<hub>/auth/github/callback`; if the hub sits behind a proxy that
+doesn't pass the public address, also set `AGENTSTALK_PUBLIC_URL` to the hub URL.
+Without the secret, the login page signs in with a short code instead.
+
+There is no shared password: each team is a GitHub repo, everyone signs in with
+GitHub, and each repo's owner manages their own team (removing people, renaming
+agents). `AGENT_HUB_TOKEN` is an optional master key for the hub's host to see
+every project; leave it unset unless you need that.
 
 The repo owner selects a different hub once:
 
@@ -141,9 +147,9 @@ node install-kit.mjs ../your-project --hub https://your-hub.example.com
 
 ### Dashboard
 
-Open the personal link the setup prints (`https://<hub>/#key=…`). The key is moved into your browser's storage and removed from the address bar; the part after `#` is never sent to the server. Your name comes from GitHub, so there's nothing to pick. Each repo you join adds its project to the dashboard's project menu.
+Open the hub and log in with GitHub; a link like `https://<hub>/?project=owner/repo` opens it on your team's repo. The personal link the setup prints (`https://<hub>/#key=…`) works too. Your key is kept in your browser's storage and the part after `#` is never sent to the server. Your name comes from GitHub, so there's nothing to pick. Click your name to switch between GitHub accounts you've used here, add another, or sign out.
 
-The hub owner can open `https://<hub>/#admin=<AGENT_HUB_TOKEN>` to see every project.
+If `AGENT_HUB_TOKEN` is set, the hub's host can open `https://<hub>/#admin=<AGENT_HUB_TOKEN>` to see every project.
 
 ### Several repos on one hub
 
