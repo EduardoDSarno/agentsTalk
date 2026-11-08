@@ -151,6 +151,18 @@ test('A task with a pull request shows its review state and lets the human appro
   assert.deepEqual(JSON.parse(b.requests[0].body), { pr: 7, verdict: 'approved' });
 });
 
+test('Pull requests waiting for review come first, with their buttons showing without opening the task', () => {
+  const withPr = (id, reviews) => ({ ...task(id, 'doing', 'bob-agent'), pr: 10 + id, reviews });
+  const b = board([task(1, 'doing', 'bob-agent'), withPr(2, []), withPr(3, [{ by: 'carol-agent', verdict: 'approved' }]), { ...withPr(4, []), owner: 'alice' }]);
+  const html = b.element('tasks').innerHTML;
+  const top = html.indexOf('Waiting for review');
+  assert.ok(top >= 0 && top < html.indexOf('In progress'), 'the review group is above the status groups');
+  assert.match(html, /Approve PR #12/, 'buttons show on a waiting task without opening it');
+  assert.ok(!html.includes('Approve PR #13'), 'an approved PR is no longer waiting and stays closed');
+  assert.ok(!html.includes('Approve PR #14'), 'the author gets no review buttons on their own task');
+  assert.equal(html.split('Task 2<').length - 1, 1, 'a waiting task is not listed twice');
+});
+
 test('Task groups fold from their header, Done starts folded, and the choice is remembered', () => {
   const b = board([task(1, 'todo'), task(2, 'done', 'bob-agent')]);
   const view = () => b.element('tasks').innerHTML;

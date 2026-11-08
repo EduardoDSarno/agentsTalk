@@ -468,8 +468,19 @@ body { margin: 0; }
     const focused = document.activeElement;
     const focusedId = focused?.dataset?.taskNote;
     const selection = focusedId ? [focused.selectionStart, focused.selectionEnd] : null;
-    const groups = TASK_GROUPS.map(([status, label]) => ({ status, label, items: tasks.filter((t) => t.status === status) })).filter((g) => g.items.length);
+    // Pull requests nobody has reviewed yet come first, with their buttons showing,
+    // so the human sees what waits on them without opening each task.
+    const waiting = tasks.filter(waitsForReview);
+    const groups = [
+      ...(waiting.length ? [{ status: "review", label: "Waiting for review", items: waiting, pinned: true }] : []),
+      ...TASK_GROUPS.map(([status, label]) => ({ status, label, items: tasks.filter((t) => t.status === status && !waitsForReview(t)) })),
+    ].filter((g) => g.items.length);
     $("tasks").innerHTML = groups.length ? groups.map((g) => {
+      if (g.pinned) return `
+      <div class="review-group">
+        <div class="grp" style="cursor:default"><span class="warn">${g.label}</span><span class="tn" style="font-weight:400">${g.items.length}</span></div>
+        ${g.items.map((t) => taskCard(t, enabled, true)).join("")}
+      </div>`;
       const folded = collapsedGroups.has(g.status);
       return `
       <div>
@@ -485,8 +496,16 @@ body { margin: 0; }
     }
   }
 
-  /** One task: a toggle row, and when opened its note field and the actions this person may take. */
-  function taskCard(t, enabled) {
+  /** Whether a task's pull request has had no review yet (approvals and change requests both count). */
+  function waitsForReview(t) {
+    return reviewLabel(t) === "Needs review";
+  }
+
+  /**
+   * One task: a toggle row, and when opened its note field and the actions this
+   * person may take. With showReview the review buttons show without opening it.
+   */
+  function taskCard(t, enabled, showReview = false) {
     const heldByOther = t.owner && t.owner !== currentName && ["doing", "blocked"].includes(t.status);
     // A stale task (its owner went quiet) can be taken over by anyone.
     const actions = heldByOther && t.stale ? [["doing", "Take over"]] : heldByOther ? [] : t.status === "todo" ? [["doing", "Claim"]]
@@ -500,8 +519,10 @@ body { margin: 0; }
     const pr = t.pr ? `<a class="mono" href="https://github.com/${esc(project)}/pull/${esc(t.pr)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #${esc(t.pr)}</a>` : "";
     const stale = t.stale ? `<span class="warn" title="Its owner has been quiet for a while; anyone can take it over">Stale</span>` : "";
     const review = reviewLabel(t);
-    const reviewButtons = review && open ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${[["approved", "Approve"], ["changes", "Request changes"]].map(([verdict, label]) => `<button type="button" class="sbtn" data-review-pr="${esc(t.pr)}" data-verdict="${verdict}" aria-label="${label} PR #${esc(t.pr)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}</div>` : "";
-    const detail = !open ? "" : `<div class="tdetail">${reviewButtons}${actions.length
+    // The author cannot review their own task, so they get no buttons.
+    const reviewButtons = review && t.owner !== currentName ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${[["approved", "Approve"], ["changes", "Request changes"]].map(([verdict, label]) => `<button type="button" class="sbtn" data-review-pr="${esc(t.pr)}" data-verdict="${verdict}" aria-label="${label} PR #${esc(t.pr)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}${enabled ? "" : `<span class="sm mut" style="align-self:center">Sign in to review</span>`}</div>` : "";
+    const pinnedReview = showReview && !open && reviewButtons ? `<div class="tdetail">${reviewButtons}</div>` : "";
+    const detail = !open ? pinnedReview : `<div class="tdetail">${reviewButtons}${actions.length
       ? `<input class="inp" id="task-note-${esc(t.id)}" data-task-note="${esc(t.id)}" aria-label="Note for task #${esc(t.id)}" placeholder="Note (required to block)" value="${esc(taskNotes.get(t.id) ?? t.note ?? "")}"${enabled ? "" : " disabled"}>
          <div style="display:flex;flex-wrap:wrap;gap:6px">${actions.map(([status, label]) => `<button type="button" class="sbtn" data-task-id="${esc(t.id)}" data-status="${status}" aria-label="${label} task #${esc(t.id)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}</div>`
       : `<div class="sm mut">Held by ${esc(t.owner)}. Only they can move it.</div>`}</div>`;
