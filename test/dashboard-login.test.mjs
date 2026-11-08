@@ -69,3 +69,8 @@ test('Continue with GitHub goes to GitHub for the repo, and a missing repo is as
   q.run('continueWithGitHub()');
   assert.deepEqual(q.assigned, ['/auth/github/start?repo=team%2Fother']);
 });
+
+test('dialogs open above the login page, so the sign-in code and its errors are visible', () => {
+  const z = (selector) => Number(html.match(new RegExp(`\\${selector} \\{[^}]*z-index: (\\d+)`))[1]);
+  assert.ok(z('.hub .overlay') > z('.hub .login'));
+});

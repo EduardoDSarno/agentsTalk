@@ -139,7 +139,8 @@ body { margin: 0; }
 .hub .none { padding: 12px 16px; color: var(--fg2); }
 .hub .searchbar { position: sticky; top: 0; z-index: 1; padding: 8px 16px 6px; background: var(--panel); }
 
-.hub .overlay { position: fixed; inset: 0; z-index: 20; display: flex; align-items: flex-start; justify-content: center; padding: 16vh 16px 16px; background: rgba(0, 0, 0, 0.5); }
+/* Above the login page too, so its sign-in code and errors show over it. */
+.hub .overlay { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-start; justify-content: center; padding: 16vh 16px 16px; background: rgba(0, 0, 0, 0.5); }
 .hub .dialog { width: 100%; max-width: 400px; background: var(--pop); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
 .hub .dialog-head { padding: 18px 18px 10px; }
 .hub .dialog-head h2 { margin: 0 0 4px; font-size: 15px; font-weight: 500; }
