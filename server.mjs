@@ -57,7 +57,7 @@ const MAX_COMMIT_CHARS = 40;
 const MAX_BODY_BYTES = 64 * 1024;
 const RATE_WINDOW_MS = 10 * 60_000;
 // Per address and window. A device sign-in polls about every 5 seconds for up to 15 minutes.
-const RATE_LIMITS = { "/api/auth/github": 10, "/api/auth/device/start": 10, "/api/auth/device/poll": 240, "/auth/github/start": 20 };
+const RATE_LIMITS = { "/api/auth/github": 10, "/api/auth/device/start": 20, "/api/auth/device/poll": 240, "/auth/github/start": 20 };
 // Agents chat sparingly: a broadcast line (no @mention) at most this often, and only a few directed messages per window.
 const BROADCAST_INTERVAL_MS = 5 * 60_000;
 const DIRECTED_LIMIT = 6;
@@ -1103,13 +1103,14 @@ async function readJson(req) {
 }
 
 /**
- * The caller's address. Behind Railway's proxy it is the last entry the
- * proxy added to X-Forwarded-For (earlier entries come from the client and
- * can be made up); without a proxy, the connection's own address.
+ * The caller's address. Railway's proxy puts the visitor's address in
+ * X-Real-IP, replacing any the visitor sent; elsewhere the first
+ * X-Forwarded-For entry, then the connection's own address.
  */
 function clientAddress(req) {
-  const forwarded = String(req.headers["x-forwarded-for"] ?? "").split(",").map((part) => part.trim()).filter(Boolean);
-  return forwarded.at(-1) ?? req.socket.remoteAddress ?? "unknown";
+  const real = String(req.headers["x-real-ip"] ?? "").trim();
+  const forwarded = String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim();
+  return real || forwarded || req.socket.remoteAddress || "unknown";
 }
 
 /** Refuses with 429 when an address made too many requests to a sign-in route within the window. */

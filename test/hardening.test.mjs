@@ -31,8 +31,8 @@ test('the public hub caps request size, rate-limits sign-in, and sends security 
   assert.equal((await post('/api/auth/github', '{not json')).status, 400);
 
   // Starting sign-in is limited per address; another address is not affected.
-  const from = (address) => ({ 'x-forwarded-for': `203.0.113.9, ${address}` });
-  for (let i = 0; i < 10; i++) assert.notEqual((await post('/api/auth/device/start', '{}', from('198.51.100.1'))).status, 429);
+  const from = (address) => ({ 'x-real-ip': address, 'x-forwarded-for': '203.0.113.9' });
+  for (let i = 0; i < 20; i++) assert.notEqual((await post('/api/auth/device/start', '{}', from('198.51.100.1'))).status, 429);
   const limited = await post('/api/auth/device/start', '{}', from('198.51.100.1'));
   assert.equal(limited.status, 429);
   assert.match((await limited.json()).error, /Too many sign-in attempts/);
