@@ -528,8 +528,8 @@ body { margin: 0; }
    * person may take. With showReview the review buttons show without opening it.
    */
   function taskCard(t, enabled, showReview = false) {
-    // A person may move the tasks their own agents hold.
-    const heldByOther = t.owner && personOf(t.owner) !== currentName && ["doing", "blocked"].includes(t.status);
+    // People may move any task an agent holds; only a task another person holds stays theirs.
+    const heldByOther = t.owner && t.owner !== currentName && !isAgentName(t.owner) && ["doing", "blocked"].includes(t.status);
     // A stale task (its owner went quiet) can be taken over by anyone.
     const actions = heldByOther && t.stale ? [["doing", "Take over"]] : heldByOther ? [] : t.status === "todo" ? [["doing", "Claim"]]
       : t.status === "done" ? [["todo", "Reopen"]]
@@ -540,7 +540,7 @@ body { margin: 0; }
       ? `<span style="display:inline-flex;align-items:center;gap:5px;min-width:0" title="${esc(t.owner)}">${personAvatar(t.owner, isAgentName(t.owner), 16)}<span class="clip">${esc(personOf(t.owner))}</span></span>`
       : "<span>Unassigned</span>";
     // The pull request for this task, linked to GitHub (the project is owner/repo).
-    const pr = t.pr ? `<a class="mono" href="https://github.com/${esc(project)}/pull/${esc(t.pr)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #${esc(t.pr)}</a>` : "";
+    const pr = t.pr ? `<a class="mono" href="https://github.com/${esc(project)}/pull/${esc(t.pr)}" target="_blank" rel="noopener">PR #${esc(t.pr)}</a>` : "";
     const stale = t.stale ? `<span class="warn" title="Its owner has been quiet for a while; anyone can take it over">Stale</span>` : "";
     const review = reviewLabel(t);
     // The author cannot review their own task, so they get no buttons.
@@ -588,6 +588,8 @@ body { margin: 0; }
         toggleGroup(group.dataset.groupToggle);
         return;
       }
+      // The pull request link inside a task row opens GitHub without toggling the row.
+      if (event.target.closest("a[href]")) return;
       const toggle = event.target.closest("[data-task-toggle]");
       if (toggle) {
         const id = Number(toggle.dataset.taskToggle);
