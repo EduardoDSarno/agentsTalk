@@ -125,7 +125,7 @@ body { margin: 0; }
 .hub .none { padding: 12px 16px; color: var(--fg2); }
 .hub .searchbar { position: sticky; top: 0; z-index: 1; padding: 8px 16px 6px; background: var(--panel); }
 
-.hub .overlay { position: absolute; inset: 0; z-index: 20; display: flex; align-items: flex-start; justify-content: center; padding: 16vh 16px 16px; background: rgba(0, 0, 0, 0.5); }
+.hub .overlay { position: fixed; inset: 0; z-index: 20; display: flex; align-items: flex-start; justify-content: center; padding: 16vh 16px 16px; background: rgba(0, 0, 0, 0.5); }
 .hub .dialog { width: 100%; max-width: 400px; background: var(--pop); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
 .hub .dialog-head { padding: 18px 18px 10px; }
 .hub .dialog-head h2 { margin: 0 0 4px; font-size: 15px; font-weight: 500; }
@@ -174,7 +174,7 @@ body { margin: 0; }
         </form>
         <div class="sm mut" id="presence-feedback" role="status" aria-live="polite" style="padding:0 8px 4px"></div>
         <div style="display:flex;align-items:center;gap:4px">
-          <button class="ghost" data-open-picker aria-label="Switch user" style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:40px;padding:0 8px;border-radius:6px">
+          <button class="ghost" data-open-picker aria-label="Your account" style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:40px;padding:0 8px;border-radius:6px">
             <span class="av av-h" style="width:24px;height:24px;font-size:11px" data-user-initial></span>
             <span style="display:flex;flex-direction:column;min-width:0;line-height:16px">
               <span style="font-weight:500" data-user-name></span>
@@ -201,7 +201,8 @@ body { margin: 0; }
         </div>
         <div class="banner" role="alert" id="signed-out" hidden>
           <span class="dot" style="background:var(--warn)"></span>
-          <span><span style="font-weight:500">Not signed in.</span> <span class="mut">Run <span class="mono">node agentstalk</span> in your team's repo and open the personal dashboard link it prints.</span></span>
+          <span style="flex:1"><span style="font-weight:500">Not signed in.</span> <span class="mut">Sign in with the GitHub account that can write to your team's repo.</span></span>
+          <button class="sbtn" type="button" id="signin-banner" style="background:var(--acc);border-color:var(--acc);color:#ffffff">Sign in with GitHub</button>
         </div>
         <div class="banner" role="alert" id="offline" hidden>
           <span class="dot" style="background:var(--warn)"></span>
@@ -263,6 +264,17 @@ body { margin: 0; }
       <div style="display:flex;justify-content:flex-end;padding:8px 12px;border-top:1px solid var(--line)" id="picker-foot"><button class="ghost" id="picker-cancel" style="height:28px;padding:0 10px;border-radius:6px;color:var(--fg2)">Cancel</button></div>
     </div>
   </div>
+
+  <div class="overlay" id="account" hidden>
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="account-title">
+      <div class="dialog-head">
+        <h2 id="account-title">Sign in with GitHub</h2>
+        <p id="account-lead"></p>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;padding:4px 18px 14px" id="account-body"></div>
+      <div style="display:flex;justify-content:flex-end;padding:8px 12px;border-top:1px solid var(--line)"><button class="ghost" id="account-close" style="height:28px;padding:0 10px;border-radius:6px;color:var(--fg2)">Close</button></div>
+    </div>
+  </div>
 </div>
 <script>
   const REFRESH_MS = 2000;
@@ -289,10 +301,16 @@ body { margin: 0; }
   let mentionable = [EVERYONE];
   // Personal keys saved in this browser, one per project (repo); the admin token, if any, under ADMIN_SLOT.
   const KEYS_STORE = "agentstalk-keys";
+  // Every GitHub account this browser signed in with, per project, so switching between them is one click.
+  const ACCOUNTS_STORE = "agentstalk-accounts";
+  const DEFAULT_POLL_SECONDS = 5;
   const ADMIN_SLOT = "*admin";
   const $ = (id) => document.getElementById(id);
 
   let keys = readKeys();
+  let accounts = readAccounts();
+  // The GitHub sign-in in progress: its device code, the repo, and the timer for the next check.
+  let deviceSignIn = null;
   // The project (repo) this page shows; a personal key decides it, or ?project= picks among saved ones.
   let project = new URLSearchParams(location.search).get("project") || Object.keys(keys).find((name) => name !== ADMIN_SLOT) || "";
   let isAdmin = false;
@@ -340,6 +358,7 @@ body { margin: 0; }
       refresh();
     });
     setUpPicker();
+    setUpAccount();
     setUpComposer();
     setUpTasks();
     setUpTeam();
@@ -713,15 +732,7 @@ body { margin: 0; }
     $("members").innerHTML = members.length ? [...members].sort((a, b) => a.name.localeCompare(b.name)).map((member) => {
       const person = member.person ?? {};
       const personStatus = statusOf(person.status);
-      const agent = member.agent || "";
-      const tasks = lastTasks.filter((t) => t.status === "doing" && t.owner === agent);
-      const lockCount = Number.isFinite(member.locks) ? Math.max(0, Math.floor(member.locks)) : lastLocks.filter((l) => l.owner === agent).length;
-      const agentStatus = Object.hasOwn(STATUS_LABELS, member.status) ? member.status : tasks.length || lockCount ? "working" : "away";
-      // The agent's own status line, shown when it says something its tasks don't already say.
-      const said = member.doing && !tasks.some((t) => member.doing.includes(t.title)) ? member.doing : "";
-      const work = [...tasks.map((t) => t.title), ...(said ? [said] : []), ...(lockCount ? [`${lockCount} ${lockCount === 1 ? "file" : "files"} locked`] : [])];
       const humanLine = `${person.doing ? `${person.doing} · ` : ""}${lastSeenLabel(seenAt(person.lastSeen))}`;
-      const agentLine = `${work.length ? work.join(" · ") : "No work reported"} · ${lastSeenLabel(seenAt(member.lastSeen))}`;
       return `<div style="margin-bottom:6px">
         <div class="mem">
           ${personAvatar(member.name, false, 20)}
@@ -730,15 +741,34 @@ body { margin: 0; }
             <div class="l2" title="${esc(humanLine)}">${esc(humanLine)}</div>
           </div>
         </div>
-        <div class="mem sub">
-          ${personAvatar(agent, true, 20)}
-          <div style="min-width:0">
-            <div class="l1"><span class="clip mono" style="font-size:12.5px">${esc(agent)}</span><span style="flex:1"></span><span class="st st-${agentStatus}" aria-hidden="true"></span><span class="sm mut">${STATUS_LABELS[agentStatus]}</span></div>
-            <div class="l2" title="${esc(agentLine)}">${esc(agentLine)}</div>
-          </div>
-        </div>
+        ${agentsOf(member).map(agentRow).join("")}
       </div>`;
     }).join("") : `<div class="sm mut" style="padding:4px 8px">No teammates yet</div>`;
+  }
+
+  /** A person's agents, newest hubs list them all; older hubs give one, and someone who only signed in has none. */
+  function agentsOf(member) {
+    if (Array.isArray(member.agents)) return member.agents;
+    return member.agent ? [{ name: member.agent, status: member.status, doing: member.doing, lastSeen: member.lastSeen, locks: member.locks }] : [];
+  }
+
+  /** One agent under its person: what it is working on, its locks, and when it was last heard from. */
+  function agentRow(agent) {
+    const tasks = lastTasks.filter((t) => t.status === "doing" && t.owner === agent.name);
+    const lockCount = Number.isFinite(agent.locks) ? Math.max(0, Math.floor(agent.locks)) : lastLocks.filter((l) => l.owner === agent.name).length;
+    const agentStatus = Object.hasOwn(STATUS_LABELS, agent.status) ? agent.status : tasks.length || lockCount ? "working" : "away";
+    // The agent's own status line, shown when it says something its tasks don't already say.
+    const said = agent.doing && !tasks.some((t) => agent.doing.includes(t.title)) ? agent.doing : "";
+    const work = [...tasks.map((t) => t.title), ...(said ? [said] : []), ...(lockCount ? [`${lockCount} ${lockCount === 1 ? "file" : "files"} locked`] : [])];
+    const agentLine = `${work.length ? work.join(" · ") : "No work reported"} · ${lastSeenLabel(seenAt(agent.lastSeen))}`;
+    return `
+        <div class="mem sub">
+          ${personAvatar(agent.name, true, 20)}
+          <div style="min-width:0">
+            <div class="l1"><span class="clip mono" style="font-size:12.5px">${esc(agent.name)}</span><span style="flex:1"></span><span class="st st-${agentStatus}" aria-hidden="true"></span><span class="sm mut">${STATUS_LABELS[agentStatus]}</span></div>
+            <div class="l2" title="${esc(agentLine)}">${esc(agentLine)}</div>
+          </div>
+        </div>`;
   }
 
   /** Only the repo owner (the first part of owner/repo) can remove people, and never themselves. */
@@ -1069,7 +1099,7 @@ body { margin: 0; }
       const button = event.target.closest("[data-name]");
       if (button) pickName(button.dataset.name);
     });
-    document.querySelectorAll("[data-open-picker]").forEach((b) => b.addEventListener("click", openPicker));
+    document.querySelectorAll("[data-open-picker]").forEach((b) => b.addEventListener("click", openAccount));
     $("picker-cancel").addEventListener("click", () => ($("picker").hidden = true));
     // Without a saved name, the picker opens once the hub has sent the team (see setTeam).
     if (currentName) pickName(currentName);
@@ -1178,12 +1208,13 @@ body { margin: 0; }
     const response = await fetch("/api/me", { headers: { authorization: `Bearer ${key}` } });
     if (!response.ok) return;
     const me = await response.json();
-    if (me.admin) keys[ADMIN_SLOT] = key;
-    else {
-      keys[me.project] = key;
+    if (me.admin) {
+      keys[ADMIN_SLOT] = key;
+      writeStored(KEYS_STORE, JSON.stringify(keys));
+    } else {
+      rememberAccount(me.project, me.login, key);
       project = me.project;
     }
-    writeStored(KEYS_STORE, JSON.stringify(keys));
   }
 
   /**
@@ -1195,6 +1226,11 @@ body { margin: 0; }
     $("signed-out").hidden = Boolean(currentKey());
     if (!currentKey()) return;
     const response = await hubFetch("/api/me");
+    if (response.status === 401 && keys[project]) {
+      forgetAccount(project, keys[project]);
+      $("signed-out").hidden = Boolean(currentKey());
+      return;
+    }
     if (!response.ok) return;
     const me = await response.json();
     isAdmin = me.admin;
@@ -1217,6 +1253,166 @@ body { margin: 0; }
   /** The key for the shown project, falling back to the admin token. */
   function currentKey() {
     return keys[project] || keys[ADMIN_SLOT] || "";
+  }
+
+  /** Reads the remembered accounts ({ project: { login: key } }); storage can be blocked, so failures give none. */
+  function readAccounts() {
+    try {
+      const saved = JSON.parse(readStored(ACCOUNTS_STORE) || "{}");
+      return saved && typeof saved === "object" ? saved : {};
+    } catch { return {}; }
+  }
+
+  /** Remembers a personal key as one of this browser's accounts for its project, and makes it the one in use there. */
+  function rememberAccount(projectName, login, key) {
+    keys[projectName] = key;
+    (accounts[projectName] ??= {})[login] = key;
+    writeStored(KEYS_STORE, JSON.stringify(keys));
+    writeStored(ACCOUNTS_STORE, JSON.stringify(accounts));
+  }
+
+  /** Forgets one key for a project, as the key in use and as a remembered account. */
+  function forgetAccount(projectName, key) {
+    if (keys[projectName] === key) delete keys[projectName];
+    for (const [login, saved] of Object.entries(accounts[projectName] ?? {})) if (saved === key) delete accounts[projectName][login];
+    writeStored(KEYS_STORE, JSON.stringify(keys));
+    writeStored(ACCOUNTS_STORE, JSON.stringify(accounts));
+  }
+
+  /** Opens the page fresh on a project, so nothing from the previous account stays on screen. */
+  function reloadOn(projectName) {
+    location.replace(`${location.pathname}?project=${encodeURIComponent(projectName)}`);
+  }
+
+  /** Wires the account dialog: sign in with GitHub, switch to a remembered account, or sign out. */
+  function setUpAccount() {
+    $("account-close").addEventListener("click", closeAccount);
+    $("signin-banner").addEventListener("click", openAccount);
+    $("account-body").addEventListener("click", (event) => {
+      const other = event.target.closest("[data-account]");
+      if (other) return switchAccount(other.dataset.account);
+      if (event.target.closest("[data-account-signin]")) return startSignIn();
+      if (event.target.closest("[data-account-signout]")) return signOut();
+      if (event.target.closest("[data-account-admin]")) {
+        closeAccount();
+        return openPicker();
+      }
+      if (event.target.closest("[data-copy-code]") && deviceSignIn) return navigator.clipboard?.writeText(deviceSignIn.userCode).catch(() => {});
+      if (event.target.closest("[data-open-github]") && deviceSignIn) return open(deviceSignIn.verificationUri, "_blank", "noopener");
+    });
+  }
+
+  function openAccount() {
+    stopDeviceSignIn();
+    renderAccount();
+    $("account").hidden = false;
+  }
+
+  function closeAccount() {
+    stopDeviceSignIn();
+    $("account").hidden = true;
+  }
+
+  /** Shows who is signed in here, the other accounts this browser remembers for the project, and the sign-in and sign-out buttons. */
+  function renderAccount() {
+    const signedIn = Boolean(keys[project] && currentName);
+    const others = Object.keys(accounts[project] ?? {}).filter((login) => login !== currentName).sort();
+    $("account-title").textContent = signedIn ? `Signed in as ${currentName}` : "Sign in with GitHub";
+    $("account-lead").textContent = signedIn
+      ? `On ${project}. Switch to another GitHub account, or sign out of this browser.`
+      : "Use the GitHub account that can write to your team's repo.";
+    $("account-body").innerHTML = [
+      ...others.map((login) => `<button class="pick" data-account="${esc(login)}">${personAvatar(login, false, 28)}<span style="font-size:14px;font-weight:500">Switch to ${esc(login)}</span></button>`),
+      signedIn ? "" : `<label class="sm mut" for="account-repo">Repo</label><input class="inp" id="account-repo" placeholder="owner/name" value="${esc(project)}" autocomplete="off" spellcheck="false">`,
+      `<button class="sbtn" type="button" data-account-signin style="background:var(--acc);border-color:var(--acc);color:#ffffff">${signedIn ? "Sign in with another GitHub account" : "Sign in with GitHub"}</button>`,
+      signedIn ? `<button class="sbtn" type="button" data-account-signout>Sign out</button>` : "",
+      // The hub admin's token has no GitHub name, so it still picks who to post as.
+      isAdmin && !keys[project] ? `<button class="sbtn" type="button" data-account-admin>Choose who to post as (admin)</button>` : "",
+      `<div class="sm warn" id="account-error" role="alert"></div>`,
+    ].join("");
+  }
+
+  /** Asks the hub for a GitHub sign-in code for the repo, then shows it and waits for the person to approve it on GitHub. */
+  async function startSignIn() {
+    const repo = (keys[project] ? project : $("account-repo")?.value ?? project).trim().toLowerCase();
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return accountError("Enter the repo as owner/name");
+    stopDeviceSignIn();
+    const response = await fetch("/api/auth/device/start", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ repo }) }).catch(() => null);
+    const device = response ? await response.json().catch(() => ({})) : {};
+    if (!response?.ok) return accountError(device.error || "Could not reach the hub to start GitHub sign-in");
+    if (!/^https:\/\//.test(device.verificationUri ?? "")) return accountError("GitHub sent an unexpected sign-in page");
+    deviceSignIn = { ...device, repo, timer: 0 };
+    renderDeviceStep(device);
+    scheduleDevicePoll(device.interval);
+  }
+
+  /** Shows the code to enter on GitHub, with buttons to copy it and to open GitHub's page. */
+  function renderDeviceStep(device) {
+    $("account-title").textContent = "Enter this code on GitHub";
+    $("account-lead").textContent = "Open GitHub and enter the code while signed in as the account you want here. For a different account, switch accounts on GitHub first.";
+    $("account-body").innerHTML = `
+      <div class="mono" style="font-size:22px;letter-spacing:2px;text-align:center;padding:8px 0" id="account-code">${esc(device.userCode)}</div>
+      <div style="display:flex;gap:6px">
+        <button class="sbtn" type="button" data-copy-code style="flex:1">Copy code</button>
+        <button class="sbtn" type="button" data-open-github style="flex:1;background:var(--acc);border-color:var(--acc);color:#ffffff">Open GitHub</button>
+      </div>
+      <div class="sm mut" role="status">Waiting for you to approve on GitHub…</div>
+      <div class="sm warn" id="account-error" role="alert"></div>`;
+  }
+
+  function scheduleDevicePoll(seconds) {
+    if (!deviceSignIn) return;
+    deviceSignIn.timer = setTimeout(pollSignIn, Math.max(1, Number(seconds) || DEFAULT_POLL_SECONDS) * 1000);
+  }
+
+  /** Checks once whether the code was approved; on success remembers the new account and opens its project. */
+  async function pollSignIn() {
+    const current = deviceSignIn;
+    if (!current) return;
+    const response = await fetch("/api/auth/device/poll", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deviceCode: current.deviceCode, repo: current.repo }) }).catch(() => null);
+    if (deviceSignIn !== current) return;
+    // A dropped connection is retried; GitHub's own answer decides everything else.
+    if (!response) return scheduleDevicePoll(current.interval);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      deviceSignIn = null;
+      return accountError(result.error || "GitHub sign-in failed");
+    }
+    if (!result.done) {
+      if (result.interval) current.interval = result.interval;
+      return scheduleDevicePoll(current.interval);
+    }
+    deviceSignIn = null;
+    rememberAccount(result.project, result.login, result.key);
+    writeStored(NAME_KEY, result.login);
+    reloadOn(result.project);
+  }
+
+  function stopDeviceSignIn() {
+    if (deviceSignIn) clearTimeout(deviceSignIn.timer);
+    deviceSignIn = null;
+  }
+
+  /** Uses another account this browser already signed in with for the project. */
+  function switchAccount(login) {
+    const key = accounts[project]?.[login];
+    if (!key) return;
+    keys[project] = key;
+    writeStored(KEYS_STORE, JSON.stringify(keys));
+    writeStored(NAME_KEY, login);
+    reloadOn(project);
+  }
+
+  /** Forgets the current account's key in this browser; other remembered accounts stay. */
+  function signOut() {
+    forgetAccount(project, keys[project]);
+    writeStored(NAME_KEY, "");
+    reloadOn(project);
+  }
+
+  function accountError(text) {
+    const box = $("account-error");
+    if (box) box.textContent = text;
   }
 
   /** Reads the saved keys; storage can be blocked, so failures give none. */
