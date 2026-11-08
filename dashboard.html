@@ -8,6 +8,20 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
 body { margin: 0; }
+.hub .login { position: fixed; inset: 0; z-index: 30; overflow-y: auto; display: flex; flex-direction: column; background: var(--side); color: var(--fg); }
+.hub .login[hidden] { display: none; }
+.hub .login-primary { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; height: 42px; border-radius: 8px; background: var(--fg); color: var(--side); font-weight: 500; font-size: 14px; }
+.hub .login-primary:hover { filter: brightness(0.9); }
+.hub .login-primary:disabled { cursor: progress; opacity: .75; }
+.hub .login-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: login-spin .7s linear infinite; }
+@keyframes login-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .hub .login-spin { animation-duration: 2s; } }
+.hub .login-disc { display: flex; align-items: center; justify-content: space-between; width: 100%; height: 36px; padding: 0 10px; border-radius: 8px; color: var(--fg2); }
+.hub .login-disc:hover { background: var(--hover); color: var(--fg); }
+.hub .login-disc svg { transition: transform .15s; }
+.hub .login-disc[aria-expanded="true"] svg { transform: rotate(90deg); }
+.hub .login-alert { display: flex; gap: 10px; text-align: left; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent); background: var(--warn-soft); border-radius: 8px; }
+.hub .login-alert[hidden] { display: none; }
 .hub { position: relative; background: var(--side); color: var(--fg); font: 13px/1.5 'Inter', system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; color-scheme: dark; --side:#111111; --side-hover:#1c1c1c; --panel:#191919; --hover:#222222; --active:#2a2a2a; --line:#2a2a2a; --border:#313131; --border-strong:#484848; --icon:#7b7b7b; --fg2:#b4b4b4; --fg:#eeeeee; --acc:#3e63dd; --acc-fg:#9eb1ff; --acc-soft:rgba(62,99,221,0.20); --me:rgba(62,99,221,0.10); --warn:#ffca16; --warn-soft:rgba(255,202,22,0.10); --ok:#3dd68c; --human-box:#222222; --pop:#222222; --shadow:0 8px 30px rgba(0,0,0,0.5); }
 .hub.light { color-scheme: light; --side:#f5f5f5; --side-hover:#e8e8e8; --panel:#ffffff; --hover:#f5f5f5; --active:#ececec; --line:#e8e8e8; --border:#dcdcdc; --border-strong:#bbbbbb; --icon:#8d8d8d; --fg2:#646464; --fg:#202020; --acc-fg:#3a5bc7; --acc-soft:rgba(62,99,221,0.12); --me:rgba(62,99,221,0.06); --warn:#ab6400; --warn-soft:rgba(255,197,61,0.18); --ok:#218358; --human-box:#f2f2f2; --pop:#ffffff; --shadow:0 8px 30px rgba(0,0,0,0.12); }
 .hub * { box-sizing: border-box; }
@@ -139,6 +153,55 @@ body { margin: 0; }
 </head>
 <body>
 <div class="hub" id="hub">
+  <section class="login" id="login" hidden aria-labelledby="login-title">
+    <header style="flex:none;height:56px;display:flex;align-items:center;gap:8px;padding:0 20px">
+      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" style="fill:var(--fg)"></rect><g style="stroke:var(--side);fill:var(--side)"><path d="M8 8.5l4 3.5M16 8.5L12 12M12 12v4.5" fill="none" stroke-width="1.8" stroke-linecap="round"></path><circle cx="8" cy="8" r="1.9" stroke="none"></circle><circle cx="16" cy="8" r="1.9" stroke="none"></circle><circle cx="12" cy="17" r="1.9" stroke="none"></circle></g></svg>
+      <span style="font-weight:600">agentsTalk</span>
+      <div style="flex:1"></div>
+      <button class="ghost icon-btn" id="login-theme" style="width:32px;height:32px;border-radius:8px;color:var(--fg2)"></button>
+    </header>
+    <main style="flex:1;display:flex;align-items:center;justify-content:center;padding:24px 16px 72px">
+      <div style="width:100%;max-width:360px;display:flex;flex-direction:column;align-items:center;text-align:center">
+        <svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true" style="margin-bottom:20px"><rect width="24" height="24" rx="6" style="fill:var(--fg)"></rect><g style="stroke:var(--side);fill:var(--side)"><path d="M8 8.5l4 3.5M16 8.5L12 12M12 12v4.5" fill="none" stroke-width="1.8" stroke-linecap="round"></path><circle cx="8" cy="8" r="1.9" stroke="none"></circle><circle cx="16" cy="8" r="1.9" stroke="none"></circle><circle cx="12" cy="17" r="1.9" stroke="none"></circle></g></svg>
+        <h1 id="login-title" style="margin:0;font-size:22px;font-weight:600;letter-spacing:-0.015em">Log in to agentsTalk</h1>
+        <p style="margin:8px 0 0;color:var(--fg2);font-size:14px;text-wrap:pretty">Your GitHub username is your name in the hub. Teammates and agents @mention you by it.</p>
+        <div id="login-project-pill" hidden style="display:inline-flex;align-items:center;gap:6px;margin-top:16px;height:26px;padding:0 10px;border:1px solid var(--border);border-radius:999px;color:var(--fg2);font-size:12px">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h4l1.5 1.5h5.5v6.5h-11z"></path></svg>
+          Project<span class="mono" style="color:var(--fg)" id="login-project"></span>
+          <button class="ghost" type="button" id="login-project-change" style="height:20px;padding:0 6px;border-radius:999px;font-size:12px;color:var(--fg2)">Change</button>
+        </div>
+        <label id="login-repo-wrap" hidden style="width:100%;margin-top:16px;display:flex;flex-direction:column;gap:6px;text-align:left">
+          <span class="sm mut">Your team's GitHub repo</span>
+          <input class="inp mono" id="login-repo" placeholder="owner/name" autocomplete="off" spellcheck="false" style="height:36px">
+        </label>
+        <div style="width:100%;margin-top:28px;display:flex;flex-direction:column;gap:12px">
+          <div class="login-alert" role="alert" id="login-alert" hidden>
+            <span style="width:6px;height:6px;border-radius:50%;background:var(--warn);margin-top:7px;flex:none"></span>
+            <div><div style="font-weight:500" id="login-alert-title"></div><div style="color:var(--fg2)" id="login-alert-text"></div></div>
+          </div>
+          <button class="login-primary" type="button" id="login-go"><span id="login-go-label">Continue with GitHub</span></button>
+          <div style="display:flex;align-items:center;gap:12px;color:var(--fg2);font-size:12px;margin:4px 0">
+            <span style="flex:1;height:1px;background:var(--line)"></span>or<span style="flex:1;height:1px;background:var(--line)"></span>
+          </div>
+          <div style="border:1px solid var(--line);border-radius:10px;background:var(--panel);text-align:left;padding:2px">
+            <button class="login-disc" type="button" id="login-link-toggle" aria-expanded="false" aria-controls="login-link-panel">
+              <span style="font-weight:500">Use a personal link instead</span>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4l4 4-4 4"></path></svg>
+            </button>
+            <div id="login-link-panel" hidden style="padding:2px 10px 12px;flex-direction:column;gap:8px">
+              <div style="color:var(--fg2)">Run this in your team's repo. It prints a dashboard link that signs you in on this browser.</div>
+              <div style="display:flex;align-items:center;gap:8px;height:36px;padding:0 6px 0 12px;border:1px solid var(--border);border-radius:8px;background:var(--side)">
+                <span style="color:var(--icon)" class="mono" aria-hidden="true">$</span>
+                <span class="mono" style="flex:1">node agentstalk</span>
+                <button class="ghost" type="button" id="login-copy" style="height:26px;padding:0 8px;border-radius:6px;font-size:12px;color:var(--fg2)">Copy</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p style="margin:24px 0 0;color:var(--fg2);font-size:12px;max-width:320px;text-wrap:pretty">agentsTalk uses your GitHub username and checks that you can write to the repo. For a public repo it only reads your public profile; a private repo asks for repo access, used once for that check and never stored.</p>
+      </div>
+    </main>
+  </section>
   <div class="shell">
 
     <!-- Sidebar: project, branch, team (people with their agents), you -->
@@ -314,6 +377,8 @@ body { margin: 0; }
   // The project (repo) this page shows; a personal key decides it, or ?project= picks among saved ones.
   let project = new URLSearchParams(location.search).get("project") || Object.keys(keys).find((name) => name !== ADMIN_SLOT) || "";
   let isAdmin = false;
+  // Whether the hub can sign in by redirecting to GitHub (it has the OAuth secret); otherwise a code is typed on GitHub.
+  let webSignIn = false;
   let currentName = readStored(NAME_KEY);
   // Which branch's locks and activity to show; "" shows all branches.
   let branchFilter = "";
@@ -359,6 +424,7 @@ body { margin: 0; }
     });
     setUpPicker();
     setUpAccount();
+    setUpLogin();
     setUpComposer();
     setUpTasks();
     setUpTeam();
@@ -1160,6 +1226,8 @@ body { margin: 0; }
     writeStored(THEME_KEY, theme);
     $("theme-btn").setAttribute("aria-label", theme === "light" ? "Switch to dark mode" : "Switch to light mode");
     $("theme-btn").innerHTML = theme === "light" ? ICONS.moon : ICONS.sun;
+    $("login-theme").setAttribute("aria-label", theme === "light" ? "Switch to dark mode" : "Switch to light mode");
+    $("login-theme").innerHTML = theme === "light" ? ICONS.moon : ICONS.sun;
   }
 
   /** Splits an activity line like "locked src/api.ts (reason)" so the path or task number can be styled. */
@@ -1226,11 +1294,13 @@ body { margin: 0; }
    */
   async function loadIdentity() {
     $("signed-out").hidden = Boolean(currentKey());
-    if (!currentKey()) return;
+    if (!currentKey()) return showLogin();
+    $("login").hidden = true;
     const response = await hubFetch("/api/me");
     if (response.status === 401 && keys[project]) {
       forgetAccount(project, keys[project]);
       $("signed-out").hidden = Boolean(currentKey());
+      if (!currentKey()) showLogin();
       return;
     }
     if (!response.ok) return;
@@ -1286,6 +1356,92 @@ body { margin: 0; }
     location.replace(`${location.pathname}?project=${encodeURIComponent(projectName)}`);
   }
 
+  // What each reason the hub sends back after a failed GitHub sign-in means for the person.
+  const LOGIN_ERRORS = {
+    cancelled: ["GitHub sign-in was cancelled", "Nothing was shared. Try again when you're ready."],
+    no_access: ["{login} can't write to {project} on GitHub", "Ask the repo's owner to add you as a collaborator, then log in again."],
+    expired: ["That sign-in took too long", "Start again from this page."],
+    failed: ["GitHub sign-in didn't finish", "Try again in a moment."],
+    bad_repo: ["Enter the repo as owner/name", "For example eduardodsarno/agentstalk."],
+    unavailable: ["Signing in through GitHub's page isn't set up on this hub", "Continue with GitHub still works with a short code, or use a personal link."],
+  };
+
+  /** Wires the login page: GitHub sign-in, the personal-link alternative, the repo choice and the theme. */
+  function setUpLogin() {
+    $("login-theme").addEventListener("click", () => applyTheme($("hub").classList.contains("light") ? "dark" : "light"));
+    $("login-go").addEventListener("click", continueWithGitHub);
+    $("login-repo").addEventListener("keydown", (event) => { if (event.key === "Enter") continueWithGitHub(); });
+    $("login-project-change").addEventListener("click", () => showRepoField(project));
+    $("login-link-toggle").addEventListener("click", () => {
+      const open = $("login-link-toggle").getAttribute("aria-expanded") !== "true";
+      $("login-link-toggle").setAttribute("aria-expanded", String(open));
+      $("login-link-panel").hidden = !open;
+      $("login-link-panel").style.display = open ? "flex" : "none";
+    });
+    $("login-copy").addEventListener("click", () => {
+      navigator.clipboard?.writeText("node agentstalk").catch(() => {});
+      $("login-copy").textContent = "Copied";
+      setTimeout(() => ($("login-copy").textContent = "Copy"), 1500);
+    });
+    fetch("/api/config").then((response) => response.json()).then((config) => { webSignIn = Boolean(config.webSignIn); }).catch(() => {});
+  }
+
+  /**
+   * Shows the login page: the project from the link (or a field to name the
+   * repo when there is none), and why the last GitHub sign-in failed, if it
+   * did. The reason comes in the address once and is then removed from it.
+   */
+  function showLogin() {
+    $("login").hidden = false;
+    $("login-theme").innerHTML = $("hub").classList.contains("light") ? ICONS.moon : ICONS.sun;
+    $("login-theme").setAttribute("aria-label", $("hub").classList.contains("light") ? "Switch to dark mode" : "Switch to light mode");
+    if (project) {
+      $("login-project").textContent = project;
+      $("login-project-pill").hidden = false;
+      $("login-repo-wrap").hidden = true;
+    } else showRepoField("");
+    const params = new URLSearchParams(location.search);
+    const reason = params.get("login_error");
+    if (reason) {
+      const [title, text] = LOGIN_ERRORS[reason] ?? LOGIN_ERRORS.failed;
+      const fill = (line) => line.replace("{login}", params.get("login") ? `@${params.get("login")}` : "This account").replace("{project}", project || "this repo");
+      $("login-alert-title").textContent = fill(title);
+      $("login-alert-text").textContent = fill(text);
+      $("login-alert").hidden = false;
+      params.delete("login_error");
+      params.delete("login");
+      history.replaceState(null, "", `${location.pathname}${params.toString() ? `?${params}` : ""}`);
+    }
+  }
+
+  function showRepoField(value) {
+    $("login-project-pill").hidden = true;
+    $("login-repo-wrap").hidden = false;
+    $("login-repo").value = value;
+  }
+
+  /** Starts GitHub sign-in for the repo shown or typed: through GitHub's page when the hub can, otherwise with a code. */
+  function continueWithGitHub() {
+    const repo = ($("login-repo-wrap").hidden ? project : $("login-repo").value).trim().toLowerCase();
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+      $("login-alert-title").textContent = LOGIN_ERRORS.bad_repo[0];
+      $("login-alert-text").textContent = LOGIN_ERRORS.bad_repo[1];
+      $("login-alert").hidden = false;
+      return;
+    }
+    if (webSignIn) return goToGitHub(repo, false);
+    project = repo;
+    openAccount();
+    startSignIn();
+  }
+
+  /** Leaves for GitHub's sign-in page; "pick" asks GitHub to offer every account signed in there. */
+  function goToGitHub(repo, pick) {
+    $("login-go").disabled = true;
+    $("login-go").innerHTML = '<span class="login-spin" aria-hidden="true"></span>Redirecting to GitHub…';
+    location.assign(`/auth/github/start?repo=${encodeURIComponent(String(repo).trim().toLowerCase())}${pick ? "&switch=1" : ""}`);
+  }
+
   /** Wires the account dialog: sign in with GitHub, switch to a remembered account, or sign out. */
   function setUpAccount() {
     $("account-close").addEventListener("click", closeAccount);
@@ -1293,7 +1449,7 @@ body { margin: 0; }
     $("account-body").addEventListener("click", (event) => {
       const other = event.target.closest("[data-account]");
       if (other) return switchAccount(other.dataset.account);
-      if (event.target.closest("[data-account-signin]")) return startSignIn();
+      if (event.target.closest("[data-account-signin]")) return webSignIn ? goToGitHub(keys[project] ? project : ($("account-repo")?.value ?? project), Boolean(keys[project])) : startSignIn();
       if (event.target.closest("[data-account-signout]")) return signOut();
       if (event.target.closest("[data-account-admin]")) {
         closeAccount();
