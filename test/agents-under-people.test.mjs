@@ -105,14 +105,17 @@ test('agents named the old way are upgraded to login/agent, and the admin can re
   assert.match((await call('/api/inbox', 'ana-key', undefined, 'claude')).body, /hi/, 'its unread mentions follow it');
 });
 
-test("a person can move the tasks their own agents hold, but not someone else's", async (t) => {
+test("people can move any task an agent holds; agents can't take each other's, and a person's task stays theirs", async (t) => {
   const call = await startHub(t, { projects: { [PROJECT]: {} }, keys: { [hash('ana-key')]: keyRecord('ana'), [hash('bo-key')]: keyRecord('bo') } });
   const id = (await call('/api/tasks', 'ana-key', { title: 'ship it' }, 'opencode')).body.id;
   assert.equal((await call(`/api/tasks/${id}`, 'ana-key', { status: 'doing' }, 'opencode')).body.owner, 'ana/opencode');
 
-  // Bo and Bo's agents are refused; Ana's other agent is too, since agents coordinate in chat.
-  assert.equal((await call(`/api/tasks/${id}?as=human`, 'bo-key', { status: 'done' })).status, 409);
+  // Other agents are refused, even Ana's own, since agents coordinate in chat.
+  assert.equal((await call(`/api/tasks/${id}`, 'bo-key', { status: 'done' }, 'codex')).status, 409);
   assert.equal((await call(`/api/tasks/${id}`, 'ana-key', { status: 'done' }, 'claude')).status, 409);
+  // Bo, a person, may step in on an agent's task; resuming leaves it with the agent.
+  assert.equal((await call(`/api/tasks/${id}?as=human`, 'bo-key', { status: 'blocked', note: 'needs a decision' })).status, 200);
+  assert.equal((await call(`/api/tasks/${id}?as=human`, 'bo-key', { status: 'doing' })).body.owner, 'ana/opencode');
 
   // Ana herself can block, resume and close it, and resuming leaves it with her agent.
   assert.equal((await call(`/api/tasks/${id}?as=human`, 'ana-key', { status: 'blocked', note: 'waiting' })).status, 200);
@@ -120,4 +123,10 @@ test("a person can move the tasks their own agents hold, but not someone else's"
   const done = await call(`/api/tasks/${id}?as=human`, 'ana-key', { status: 'done', note: 'shipped' });
   assert.equal(done.status, 200);
   assert.equal(done.body.status, 'done');
+
+  // A task a person holds stays theirs: neither another person nor an agent may move it.
+  const mine = (await call('/api/tasks?as=human', 'ana-key', { title: 'mine' })).body.id;
+  assert.equal((await call(`/api/tasks/${mine}?as=human`, 'ana-key', { status: 'doing' })).body.owner, 'ana');
+  assert.equal((await call(`/api/tasks/${mine}?as=human`, 'bo-key', { status: 'done' })).status, 409);
+  assert.equal((await call(`/api/tasks/${mine}`, 'bo-key', { status: 'done' }, 'codex')).status, 409);
 });

@@ -189,13 +189,14 @@ test('A saved fold is restored on load, and unknown groups are ignored', () => {
   assert.deepEqual([...b.run('readCollapsedGroups()')], ['done'], 'bad saved values fall back to Done folded');
 });
 
-test("Task cards name the person behind an agent, and people can move their own agents' tasks", () => {
-  const b = board([task(1, 'doing', 'bob/codex'), task(2, 'doing', 'alice/opencode')]);
+test("Task cards name the person behind an agent, and people can move any agent's task but not another person's", () => {
+  const b = board([task(1, 'doing', 'bob/codex'), task(2, 'doing', 'alice/opencode'), task(3, 'doing', 'bob')]);
   const open = (id) => { b.run(`openTaskId = ${id}; taskRenderKey = ""; renderTasks(lastTasks)`); return b.element('tasks').innerHTML; };
   const bobs = open(1);
   assert.match(bobs, /title="bob\/codex"/, 'the agent shows on hover');
   assert.match(bobs, /<span class="clip">bob<\/span>/, 'the card names the person');
-  assert.match(bobs, /Held by bob\. Only they can move it\./);
+  assert.ok(bobs.includes('Done task #1'), "alice can step in on bob's agent's task");
+  assert.match(open(3), /Held by bob\. Only they can move it\./, "a task bob himself holds stays his");
   const mine = open(2);
   assert.ok(mine.includes('Done task #2'), "alice can close her own agent's task");
   assert.ok(!mine.includes('Held by'));

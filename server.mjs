@@ -45,6 +45,11 @@ const RECENT_EVENTS_IN_STATUS = 10;
 const TASK_STATUSES = ["todo", "doing", "blocked", "done"];
 const REVIEW_VERDICTS = ["approved", "changes"];
 const MAX_COMMIT_CHARS = 40;
+// The hub is public, so requests are capped in size and sign-in is rate-limited per address.
+const MAX_BODY_BYTES = 64 * 1024;
+const RATE_WINDOW_MS = 10 * 60_000;
+// Per address and window. A device sign-in polls about every 5 seconds for up to 15 minutes.
+const RATE_LIMITS = { "/api/auth/github": 10, "/api/auth/device/start": 10, "/api/auth/device/poll": 240 };
 // Agents chat sparingly: a broadcast line (no @mention) at most this often, and only a few directed messages per window.
 const BROADCAST_INTERVAL_MS = 5 * 60_000;
 const DIRECTED_LIMIT = 6;
@@ -91,11 +96,14 @@ const store = loadStore();
 ensureSnapshot();
 /** When each agent recently posted in chat, per project, for the chat limits. */
 const recentAgentPosts = new Map();
+/** Recent sign-in requests per route and address, for the sign-in rate limits. */
+const recentAuthRequests = new Map();
 
 http.createServer(handleRequest).listen(PORT, () => {
   console.log(`agentsTalk running on port ${PORT}${GITHUB_OAUTH_CLIENT_ID ? "" : " (GITHUB_OAUTH_CLIENT_ID not set: GitHub sign-in is off)"}`);
 });
 setInterval(ensureSnapshot, SNAPSHOT_INTERVAL_MS).unref();
+setInterval(pruneRateLimits, RATE_WINDOW_MS).unref();
 
 /**
  * Routes every HTTP request: the dashboard page, sign-in, the JSON API used by
@@ -110,6 +118,7 @@ async function handleRequest(req, res) {
   const branch = cleanBranch(url.searchParams.get("branch"));
   try {
     if (url.pathname === "/") return sendFile(res, DASHBOARD_FILE);
+    if (req.method === "POST" && url.pathname in RATE_LIMITS) enforceRateLimit(url.pathname, clientAddress(req));
     if (req.method === "GET" && url.pathname === "/api/health") return sendJson(res, 200, { ok: db.prepare("SELECT 1 AS ok").get().ok === 1 });
     if (req.method === "GET" && url.pathname === "/api/config") return sendJson(res, 200, { githubClientId: GITHUB_OAUTH_CLIENT_ID });
     if (req.method === "POST" && url.pathname === "/api/auth/github") return sendJson(res, 200, await signIn(await readJson(req)));
@@ -708,15 +717,16 @@ function addTask(space, agent, title) {
  * in progress or blocked only its owner can change it, so two agents never
  * work the same task; setting it back to todo releases it. Fails with 409 when
  * someone else holds the task, unless it has gone stale (its owner hasn't
- * been seen for a long time), in which case anyone may take it over. A person
- * may always move the tasks their own agents hold.
+ * been seen for a long time), in which case anyone may take it over. People
+ * on the team may move any task an agent holds (agents report to humans);
+ * only a task another person holds stays theirs.
  */
 function updateTask(space, agent, id, status, note, pr) {
   const task = space.tasks.find((candidate) => candidate.id === id);
   if (!task) throw httpError(404, `Task #${id} does not exist`);
   if (pr !== undefined && (!Number.isInteger(pr) || pr <= 0)) throw httpError(400, "pr must be a pull request number");
-  const ownersPerson = task.owner && !agent.includes("/") && splitAgentName(task.owner).login === agent;
-  const heldByOther = task.owner && task.owner !== agent && !ownersPerson;
+  const humanOverAgent = !agent.includes("/") && task.owner.includes("/");
+  const heldByOther = task.owner && task.owner !== agent && !humanOverAgent;
   const takeover = heldByOther && isStale(space, task);
   if (heldByOther && OWNED_TASK_STATUSES.includes(task.status) && !takeover) {
     throw httpError(409, `Task #${id} is ${task.status} with ${task.owner}; ask them in the chat before changing it`);
@@ -724,8 +734,8 @@ function updateTask(space, agent, id, status, note, pr) {
   if (takeover) logEvent(space, agent, `took over stale task #${id} from ${task.owner}`);
   task.updatedAt = Date.now();
   task.status = status;
-  // Resuming your agent's task leaves it with the agent.
-  if (status === "doing" && !ownersPerson) task.owner = agent;
+  // A person resuming an agent's task leaves it with the agent.
+  if (status === "doing" && !humanOverAgent) task.owner = agent;
   if (status === "todo") task.owner = "";
   if (note !== undefined) task.note = note;
   if (pr !== undefined && pr !== task.pr) {
@@ -989,26 +999,85 @@ function reply(text) {
 /** Reads a JSON request body, treating an empty body as an empty object. */
 async function readJson(req) {
   let raw = "";
-  for await (const chunk of req) raw += chunk;
-  return raw ? JSON.parse(raw) : {};
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > MAX_BODY_BYTES) throw httpError(413, "Request too large");
+  }
+  try { return raw ? JSON.parse(raw) : {}; } catch { throw httpError(400, "The request body is not valid JSON"); }
 }
+
+/**
+ * The caller's address. Behind Railway's proxy it is the last entry the
+ * proxy added to X-Forwarded-For (earlier entries come from the client and
+ * can be made up); without a proxy, the connection's own address.
+ */
+function clientAddress(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] ?? "").split(",").map((part) => part.trim()).filter(Boolean);
+  return forwarded.at(-1) ?? req.socket.remoteAddress ?? "unknown";
+}
+
+/** Refuses with 429 when an address made too many requests to a sign-in route within the window. */
+function enforceRateLimit(route, address) {
+  const now = Date.now();
+  const key = `${route}|${address}`;
+  const recent = (recentAuthRequests.get(key) ?? []).filter((at) => now - at < RATE_WINDOW_MS);
+  if (recent.length >= RATE_LIMITS[route]) throw httpError(429, "Too many sign-in attempts from this address; wait a few minutes and try again");
+  recent.push(now);
+  recentAuthRequests.set(key, recent);
+}
+
+/** Forgets addresses that have been quiet for a whole window, so the table stays small. */
+function pruneRateLimits() {
+  const now = Date.now();
+  for (const [key, times] of recentAuthRequests) if (!times.some((at) => now - at < RATE_WINDOW_MS)) recentAuthRequests.delete(key);
+}
+
+/** Headers on every response: no content sniffing, no framing by other sites, no referrer, HTTPS only. */
+const SECURITY_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+  "referrer-policy": "no-referrer",
+  "strict-transport-security": "max-age=31536000",
+};
 
 /** Sends a JSON response. */
 function sendJson(res, status, data) {
-  res.writeHead(status, { "content-type": "application/json" });
+  res.writeHead(status, { "content-type": "application/json", ...SECURITY_HEADERS });
   res.end(JSON.stringify(data));
 }
 
 /** Sends a plain-text response. */
 function sendText(res, text) {
-  res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+  res.writeHead(200, { "content-type": "text/plain; charset=utf-8", ...SECURITY_HEADERS });
   res.end(text);
 }
 
 /** Sends an HTML file from disk. */
 function sendFile(res, file) {
-  res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-  res.end(fs.readFileSync(file));
+  const html = fs.readFileSync(file, "utf8");
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": contentSecurityPolicy(html), ...SECURITY_HEADERS });
+  res.end(html);
+}
+
+/**
+ * The page may only run its own inline script (allowed by its hash, so an
+ * injected script can't run), load Google's fonts, and talk to this hub; no
+ * other site may frame it. Inline styles stay allowed, since they can't run code.
+ */
+function contentSecurityPolicy(html) {
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(([, body]) => `'sha256-${crypto.createHash("sha256").update(body).digest("base64")}'`);
+  return [
+    "default-src 'self'",
+    `script-src ${scripts.join(" ") || "'none'"}`,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+  ].join("; ");
 }
 
 /**

@@ -40,10 +40,9 @@ test('tasks can be added and moved over HTTP, and a task being worked on cannot 
   const id = added.body.id;
   assert.equal(added.body.status, 'todo');
 
-  // Alice's agent claims it; bob's agent and bob himself are refused while it is in progress.
+  // Alice's agent claims it; bob's agent is refused while it is in progress (people may step in; see agents-under-people).
   assert.equal((await call(`/api/tasks/${id}`, keys.alice, { status: 'doing', note: 'drafting' })).body.owner, 'alice/agent');
   assert.equal((await call(`/api/tasks/${id}`, keys.bob, { status: 'doing' })).status, 409);
-  assert.equal((await call(`/api/tasks/${id}?as=human`, keys.bob, { status: 'done' })).status, 409);
   // The PR number is stored on the task, must be a positive whole number, and survives later updates.
   assert.equal((await call(`/api/tasks/${id}`, keys.alice, { status: 'doing', pr: 'abc' })).status, 400);
   assert.equal((await call(`/api/tasks/${id}`, keys.alice, { status: 'doing', pr: 17 })).body.pr, 17);
