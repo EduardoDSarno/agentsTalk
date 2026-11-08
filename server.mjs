@@ -649,20 +649,24 @@ function addTask(space, agent, title) {
  * in progress or blocked only its owner can change it, so two agents never
  * work the same task; setting it back to todo releases it. Fails with 409 when
  * someone else holds the task, unless it has gone stale (its owner hasn't
- * been seen for a long time), in which case anyone may take it over.
+ * been seen for a long time), in which case anyone may take it over. A person
+ * may always move the tasks their own agents hold.
  */
 function updateTask(space, agent, id, status, note, pr) {
   const task = space.tasks.find((candidate) => candidate.id === id);
   if (!task) throw httpError(404, `Task #${id} does not exist`);
   if (pr !== undefined && (!Number.isInteger(pr) || pr <= 0)) throw httpError(400, "pr must be a pull request number");
-  const takeover = task.owner && task.owner !== agent && isStale(space, task);
-  if (task.owner && task.owner !== agent && OWNED_TASK_STATUSES.includes(task.status) && !takeover) {
+  const ownersPerson = task.owner && !agent.includes("/") && splitAgentName(task.owner).login === agent;
+  const heldByOther = task.owner && task.owner !== agent && !ownersPerson;
+  const takeover = heldByOther && isStale(space, task);
+  if (heldByOther && OWNED_TASK_STATUSES.includes(task.status) && !takeover) {
     throw httpError(409, `Task #${id} is ${task.status} with ${task.owner}; ask them in the chat before changing it`);
   }
   if (takeover) logEvent(space, agent, `took over stale task #${id} from ${task.owner}`);
   task.updatedAt = Date.now();
   task.status = status;
-  if (status === "doing") task.owner = agent;
+  // Resuming your agent's task leaves it with the agent.
+  if (status === "doing" && !ownersPerson) task.owner = agent;
   if (status === "todo") task.owner = "";
   if (note !== undefined) task.note = note;
   if (pr !== undefined && pr !== task.pr) {

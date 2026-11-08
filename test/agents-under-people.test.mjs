@@ -104,3 +104,20 @@ test('agents named the old way are upgraded to login/agent, and the admin can re
   assert.equal(after.locks[0].owner, 'ana/claude');
   assert.match((await call('/api/inbox', 'ana-key', undefined, 'claude')).body, /hi/, 'its unread mentions follow it');
 });
+
+test("a person can move the tasks their own agents hold, but not someone else's", async (t) => {
+  const call = await startHub(t, { projects: { [PROJECT]: {} }, keys: { [hash('ana-key')]: keyRecord('ana'), [hash('bo-key')]: keyRecord('bo') } });
+  const id = (await call('/api/tasks', 'ana-key', { title: 'ship it' }, 'opencode')).body.id;
+  assert.equal((await call(`/api/tasks/${id}`, 'ana-key', { status: 'doing' }, 'opencode')).body.owner, 'ana/opencode');
+
+  // Bo and Bo's agents are refused; Ana's other agent is too, since agents coordinate in chat.
+  assert.equal((await call(`/api/tasks/${id}?as=human`, 'bo-key', { status: 'done' })).status, 409);
+  assert.equal((await call(`/api/tasks/${id}`, 'ana-key', { status: 'done' }, 'claude')).status, 409);
+
+  // Ana herself can block, resume and close it, and resuming leaves it with her agent.
+  assert.equal((await call(`/api/tasks/${id}?as=human`, 'ana-key', { status: 'blocked', note: 'waiting' })).status, 200);
+  assert.equal((await call(`/api/tasks/${id}?as=human`, 'ana-key', { status: 'doing' })).body.owner, 'ana/opencode');
+  const done = await call(`/api/tasks/${id}?as=human`, 'ana-key', { status: 'done', note: 'shipped' });
+  assert.equal(done.status, 200);
+  assert.equal(done.body.status, 'done');
+});
