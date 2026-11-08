@@ -188,3 +188,15 @@ test('A saved fold is restored on load, and unknown groups are ignored', () => {
   b.stored['agent-hub-groups'] = 'not json';
   assert.deepEqual([...b.run('readCollapsedGroups()')], ['done'], 'bad saved values fall back to Done folded');
 });
+
+test("Task cards name the person behind an agent, and people can move their own agents' tasks", () => {
+  const b = board([task(1, 'doing', 'bob/codex'), task(2, 'doing', 'alice/opencode')]);
+  const open = (id) => { b.run(`openTaskId = ${id}; taskRenderKey = ""; renderTasks(lastTasks)`); return b.element('tasks').innerHTML; };
+  const bobs = open(1);
+  assert.match(bobs, /title="bob\/codex"/, 'the agent shows on hover');
+  assert.match(bobs, /<span class="clip">bob<\/span>/, 'the card names the person');
+  assert.match(bobs, /Held by bob\. Only they can move it\./);
+  const mine = open(2);
+  assert.ok(mine.includes('Done task #2'), "alice can close her own agent's task");
+  assert.ok(!mine.includes('Held by'));
+});

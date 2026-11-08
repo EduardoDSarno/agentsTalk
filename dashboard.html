@@ -268,6 +268,8 @@ body { margin: 0; }
   const REFRESH_MS = 2000;
   // Agents are named after their person and tool, "login/tool"; people are plain GitHub logins.
   const isAgentName = (name) => String(name).includes("/");
+  // The person an agent works for ("ana" for "ana/claude"); a person is their own.
+  const personOf = (name) => String(name).split("/")[0];
   const EVERYONE = "all";
   const MAX_MESSAGE_CHARS = 1000; // keep equal to MAX_MESSAGE_CHARS in server.mjs
   const COUNTER_SHOW_RATIO = 0.8;
@@ -507,14 +509,16 @@ body { margin: 0; }
    * person may take. With showReview the review buttons show without opening it.
    */
   function taskCard(t, enabled, showReview = false) {
-    const heldByOther = t.owner && t.owner !== currentName && ["doing", "blocked"].includes(t.status);
+    // A person may move the tasks their own agents hold.
+    const heldByOther = t.owner && personOf(t.owner) !== currentName && ["doing", "blocked"].includes(t.status);
     // A stale task (its owner went quiet) can be taken over by anyone.
     const actions = heldByOther && t.stale ? [["doing", "Take over"]] : heldByOther ? [] : t.status === "todo" ? [["doing", "Claim"]]
       : t.status === "done" ? [["todo", "Reopen"]]
       : [[t.status === "blocked" ? "doing" : "blocked", t.status === "blocked" ? "Resume" : "Block"], ["done", "Done"], ["todo", "Release"]];
     const open = openTaskId === t.id;
     const owner = t.owner
-      ? `<span style="display:inline-flex;align-items:center;gap:5px;min-width:0">${personAvatar(t.owner, isAgentName(t.owner), 16)}<span class="clip">${esc(t.owner)}</span></span>`
+      // Named after the person; the agent doing it shows in its avatar and on hover.
+      ? `<span style="display:inline-flex;align-items:center;gap:5px;min-width:0" title="${esc(t.owner)}">${personAvatar(t.owner, isAgentName(t.owner), 16)}<span class="clip">${esc(personOf(t.owner))}</span></span>`
       : "<span>Unassigned</span>";
     // The pull request for this task, linked to GitHub (the project is owner/repo).
     const pr = t.pr ? `<a class="mono" href="https://github.com/${esc(project)}/pull/${esc(t.pr)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #${esc(t.pr)}</a>` : "";
@@ -526,7 +530,7 @@ body { margin: 0; }
     const detail = !open ? pinnedReview : `<div class="tdetail">${reviewButtons}${actions.length
       ? `<input class="inp" id="task-note-${esc(t.id)}" data-task-note="${esc(t.id)}" aria-label="Note for task #${esc(t.id)}" placeholder="Note (required to block)" value="${esc(taskNotes.get(t.id) ?? t.note ?? "")}"${enabled ? "" : " disabled"}>
          <div style="display:flex;flex-wrap:wrap;gap:6px">${actions.map(([status, label]) => `<button type="button" class="sbtn" data-task-id="${esc(t.id)}" data-status="${status}" aria-label="${label} task #${esc(t.id)}"${enabled ? "" : " disabled"}>${label}</button>`).join("")}</div>`
-      : `<div class="sm mut">Held by ${esc(t.owner)}. Only they can move it.</div>`}</div>`;
+      : `<div class="sm mut">Held by ${esc(personOf(t.owner))}. Only they can move it.</div>`}</div>`;
     return `<div class="tcard${open ? " open" : ""}">
       <button class="trow" data-task-toggle="${esc(t.id)}" aria-expanded="${open}">
         <span style="display:inline-flex;padding-top:3px">${TASK_ICONS[t.status] ?? TASK_ICONS.todo}</span>
